@@ -2,7 +2,7 @@
 # pips-cli installer — Windows (PowerShell)
 #
 # Run in PowerShell:
-#   iwr -useb https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/install.ps1 | iex
+#   iwr -useb https://pips.dvikara.cloud/install.ps1 | iex
 #
 # Or download and run:
 #   Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
@@ -11,7 +11,7 @@
 
 $ErrorActionPreference = "Stop"
 
-$REPO_RAW = "https://raw.githubusercontent.com/cadisetrama86/pips-cli/main"
+$REPO_RAW = "https://pips.dvikara.cloud"
 $SCRIPT_NAME = "pips-cli.py"
 $WRAPPER_NAME = "pips-cli.cmd"
 $INSTALL_DIR = "$env:USERPROFILE\.local\bin"
@@ -81,7 +81,7 @@ if (-not (Test-Path $INSTALL_DIR)) {
 Write-Info "Downloading pips-cli..."
 $PY_DEST = "$INSTALL_DIR\$SCRIPT_NAME"
 try {
-    Invoke-WebRequest -Uri "$REPO_RAW/bin/pips-cli" -OutFile $PY_DEST -UseBasicParsing
+    Invoke-WebRequest -Uri "$REPO_RAW/pips-cli.py" -OutFile $PY_DEST -UseBasicParsing
     Write-Success "Downloaded → $PY_DEST"
 } catch {
     Write-Err "Download failed: $_"

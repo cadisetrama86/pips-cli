@@ -3,13 +3,13 @@
 # pips-cli installer — Linux / macOS / WSL
 #
 # One-liner:
-#   curl -fsSL https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/install.sh | bash
+#   curl -fsSL https://pips.dvikara.cloud/install.sh | bash
 #
 # Windows: use install.ps1 instead
 # ============================================================
 set -e
 
-REPO_RAW="https://raw.githubusercontent.com/cadisetrama86/pips-cli/main"
+REPO_RAW="https://pips.dvikara.cloud"
 SCRIPT_NAME="pips-cli"
 
 CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -117,9 +117,9 @@ mkdir -p "$INSTALL_DIR"
 info "Downloading pips-cli..."
 TMP=$(mktemp)
 if command -v curl &>/dev/null; then
-    curl -fsSL "$REPO_RAW/bin/pips-cli" -o "$TMP" || err "Download failed. Check internet connection."
+    curl -fsSL "$REPO_RAW/pips-cli.py" -o "$TMP" || err "Download failed. Check internet connection."
 elif command -v wget &>/dev/null; then
-    wget -q "$REPO_RAW/bin/pips-cli" -O "$TMP" || err "Download failed."
+    wget -q "$REPO_RAW/pips-cli.py" -O "$TMP" || err "Download failed."
 else
     if [[ "$OS" == "macos" ]]; then
         err "curl not found. Install Xcode Command Line Tools: xcode-select --install"
