@@ -11,8 +11,7 @@
 
 **Personal AI Infrastructure & Pipeline Server**
 
-CLI chat client berbasis terminal untuk gateway AI **pips.dvikara.cloud**.  
-Streaming response, tampilan rich TUI, dukungan banyak model AI (Gemini, Claude, GPT, dan lainnya).
+GAS CAK NDANG DIGAWE OJOK NYOCOT AE
 
 ---
 
