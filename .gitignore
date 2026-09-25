@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+.pips_cli_history
+*.log
+.DS_Store

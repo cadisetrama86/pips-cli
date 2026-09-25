@@ -1,0 +1,429 @@
+#!/usr/bin/env python3
+"""
+pips-cli — Interactive AI Chat TUI
+Connects to PIPS / 9Router AI Gateway
+https://github.com/cadisetrama86/pips-cli
+"""
+
+import os
+import sys
+import json
+import readline
+import threading
+import urllib.request
+import urllib.error
+
+# ──────────────────────────────────────────────
+# Rich imports
+# ──────────────────────────────────────────────
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.text import Text
+    from rich.markdown import Markdown
+    from rich.live import Live
+    from rich.spinner import Spinner
+    from rich.rule import Rule
+    from rich import box
+except ImportError:
+    print("Error: 'rich' library not found.")
+    print("Install with: pip install rich")
+    sys.exit(1)
+
+# ──────────────────────────────────────────────
+# Config — priority: CLI arg > env var > default
+# ──────────────────────────────────────────────
+DEFAULT_BASE_URL  = "https://pips.dvikara.cloud/v1"
+DEFAULT_MODEL     = "ag/gemini-3.8-flash"
+
+def load_env():
+    """Load ~/.pips/pips.env if exists (for local VM usage)."""
+    pips_env = os.path.expanduser("~/.pips/pips.env")
+    if os.path.exists(pips_env):
+        with open(pips_env) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    os.environ.setdefault(k.strip(), v.strip())
+
+load_env()
+
+BASE_URL = os.environ.get("PIPS_BASE_URL", DEFAULT_BASE_URL)
+API_KEY  = (
+    os.environ.get("PIPS_API_KEY") or
+    os.environ.get("OPENAI_API_KEY") or
+    ""
+)
+
+# ──────────────────────────────────────────────
+# Model catalog
+# ──────────────────────────────────────────────
+MODELS = {
+    "1": ("ag/gemini-3.8-flash",         "Gemini 3.8 Flash",      "Coding Default ⚡"),
+    "2": ("ag/gemini-3.8-flash-high",    "Gemini 3.8 Flash High", "High Quality"),
+    "3": ("ag/gemini-3.8-flash-low",     "Gemini 3.8 Flash Low",  "Low Quota 🪶"),
+    "4": ("ag/claude-sonnet-4-6",        "Claude Sonnet 4.6",     "Reasoning 🧠"),
+    "5": ("ag/claude-opus-4-6-thinking", "Claude Opus Thinking",  "Deep Reasoning 💡"),
+    "6": ("ag/gemini-pro-agent",         "Gemini Pro Agent",      "Agentic 🤖"),
+    "7": ("ag/gpt-oss-120b-medium",      "GPT OSS 120B",          "Open Source"),
+    "8": ("ag/gemini-3-flash",           "Gemini 3 Flash",        "Light Tasks 🌀"),
+    "9": ("ag/gemini-3-flash-agent",     "Gemini 3 Flash Agent",  "Agent Light"),
+}
+
+console = Console()
+
+# ──────────────────────────────────────────────
+# Readline history
+# ──────────────────────────────────────────────
+HISTORY_FILE = os.path.expanduser("~/.pips_cli_history")
+try:
+    readline.read_history_file(HISTORY_FILE)
+except FileNotFoundError:
+    pass
+readline.set_history_length(500)
+
+def save_history():
+    try:
+        readline.write_history_file(HISTORY_FILE)
+    except Exception:
+        pass
+
+
+# ──────────────────────────────────────────────
+# UI helpers
+# ──────────────────────────────────────────────
+def print_header(model_id: str):
+    model_label = model_id
+    for _, (mid, mname, mdesc) in MODELS.items():
+        if mid == model_id:
+            model_label = f"{mname} — {mdesc}"
+            break
+
+    console.print()
+    console.print(Panel(
+        Text.from_markup(
+            f"[bold cyan]PIPS[/bold cyan] [dim]—[/dim] [white]Personal AI Infrastructure & Pipeline Server[/white]\n"
+            f"[dim]Gateway:[/dim] [blue]{BASE_URL}[/blue]\n"
+            f"[dim]Model:  [/dim] [green]{model_label}[/green]\n"
+            f"[dim]Type [bold]/help[/bold] for commands • [bold]/model[/bold] to switch • [bold]/exit[/bold] to quit[/dim]"
+        ),
+        border_style="cyan",
+        padding=(0, 1),
+    ))
+    console.print()
+
+
+def select_model() -> str:
+    console.print(Panel("[bold cyan]Select Model[/bold cyan]", border_style="cyan", padding=(0, 1)))
+    console.print()
+    for k, (mid, mname, mdesc) in MODELS.items():
+        active = "[green]●[/green]" if mid == (API_KEY and DEFAULT_MODEL) else " "
+        console.print(f"  [cyan]{k}[/cyan]   [white]{mname:<28}[/white] [dim]{mdesc}[/dim]")
+    console.print()
+    console.print(f"  [dim]Enter for default ([green]{DEFAULT_MODEL}[/green])[/dim]\n")
+    try:
+        choice = input("  Select [1-9]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return DEFAULT_MODEL
+    if choice in MODELS:
+        mid, mname, _ = MODELS[choice]
+        console.print(f"\n  [green]✓[/green] [bold]{mname}[/bold]\n")
+        return mid
+    return DEFAULT_MODEL
+
+
+# ──────────────────────────────────────────────
+# Streaming chat
+# ──────────────────────────────────────────────
+def stream_chat(messages: list, model_id: str):
+    """Generator — yields text chunks from SSE stream."""
+    url = f"{BASE_URL}/chat/completions"
+    payload = json.dumps({
+        "model":    model_id,
+        "messages": messages,
+        "stream":   True,
+    }).encode()
+    headers = {
+        "Content-Type":  "application/json",
+        "Authorization": f"Bearer {API_KEY}",
+    }
+    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            for raw in resp:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if not line or line == "data: [DONE]":
+                    continue
+                if line.startswith("data: "):
+                    try:
+                        chunk = json.loads(line[6:])
+                        content = chunk["choices"][0]["delta"].get("content", "")
+                        if content:
+                            yield content
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        pass
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {e.code}: {body[:300]}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Connection error: {e.reason}\nIs pips.dvikara.cloud reachable?")
+
+
+# ──────────────────────────────────────────────
+# Thinking indicator
+# ──────────────────────────────────────────────
+class ThinkingIndicator:
+    def __enter__(self):
+        self._live = Live(
+            Spinner("dots", text=Text.from_markup(" [dim]Thinking...[/dim]")),
+            console=console,
+            refresh_per_second=10,
+            transient=True,
+        )
+        self._live.start()
+        return self
+
+    def __exit__(self, *_):
+        self._live.stop()
+
+
+# ──────────────────────────────────────────────
+# Render response
+# ──────────────────────────────────────────────
+def render_response(model_id: str, messages: list) -> str:
+    model_label = model_id
+    for _, (mid, mname, _) in MODELS.items():
+        if mid == model_id:
+            model_label = mname
+            break
+
+    console.print()
+    console.print(f"  [bold cyan]●[/bold cyan] [dim]{model_label}[/dim]")
+
+    # Start stream generator
+    try:
+        gen = stream_chat(messages, model_id)
+    except Exception as e:
+        console.print(f"\n  [red]✗ Error:[/red] {e}\n")
+        return ""
+
+    # Show thinking spinner until first token
+    try:
+        with ThinkingIndicator():
+            first = next(gen)
+    except StopIteration:
+        console.print("  [dim](empty response)[/dim]\n")
+        return ""
+    except RuntimeError as e:
+        console.print(f"\n  [red]✗ Error:[/red] {e}\n")
+        return ""
+
+    # Stream remaining tokens
+    console.print()
+    accumulated = first
+    console.print(first, end="", markup=False, highlight=False)
+
+    try:
+        for chunk in gen:
+            accumulated += chunk
+            console.print(chunk, end="", markup=False, highlight=False)
+    except RuntimeError as e:
+        console.print(f"\n  [red]✗ Stream error:[/red] {e}")
+
+    # Re-render as markdown
+    console.print("\n")
+    if accumulated.strip():
+        console.print(Panel(
+            Markdown(accumulated),
+            border_style="dim",
+            padding=(0, 1),
+            box=box.ROUNDED,
+        ))
+
+    console.print()
+    return accumulated
+
+
+# ──────────────────────────────────────────────
+# Slash commands
+# ──────────────────────────────────────────────
+def handle_slash(cmd: str, model_id: str, messages: list):
+    """Returns (model_id, messages, should_continue)."""
+    command = cmd.strip().split()[0].lower()
+
+    if command in ("/exit", "/quit", "/q"):
+        console.print("\n  [dim]Goodbye.[/dim]\n")
+        return model_id, messages, False
+
+    elif command == "/help":
+        console.print(Panel(
+            Text.from_markup(
+                "[bold]Commands[/bold]\n\n"
+                "  [cyan]/model[/cyan]      switch AI model\n"
+                "  [cyan]/models[/cyan]     list all models\n"
+                "  [cyan]/clear[/cyan]      clear chat history\n"
+                "  [cyan]/history[/cyan]    show conversation\n"
+                "  [cyan]/status[/cyan]     check gateway status\n"
+                "  [cyan]/help[/cyan]       this help\n"
+                "  [cyan]/exit[/cyan]       quit\n\n"
+                "[dim]↑↓ arrow keys to navigate input history[/dim]"
+            ),
+            border_style="cyan",
+            padding=(0, 2),
+        ))
+
+    elif command == "/model":
+        console.print()
+        model_id = select_model()
+
+    elif command == "/models":
+        console.print()
+        for k, (mid, mname, mdesc) in MODELS.items():
+            mark = "[green]●[/green]" if mid == model_id else " "
+            console.print(f"  {mark} [cyan]{k}[/cyan]  [white]{mname:<28}[/white] [dim]{mdesc}[/dim]")
+            console.print(f"       [dim]{mid}[/dim]")
+        console.print()
+
+    elif command == "/clear":
+        sys_msgs = [m for m in messages if m["role"] == "system"]
+        console.clear()
+        print_header(model_id)
+        console.print("  [dim]Chat cleared.[/dim]\n")
+        return model_id, sys_msgs, True
+
+    elif command == "/history":
+        console.print()
+        human_msgs = [m for m in messages if m["role"] != "system"]
+        if not human_msgs:
+            console.print("  [dim]No history yet.[/dim]")
+        for m in human_msgs:
+            preview = m["content"][:150] + "…" if len(m["content"]) > 150 else m["content"]
+            tag = "[bold cyan]You[/bold cyan]" if m["role"] == "user" else "[bold green]AI[/bold green]"
+            console.print(f"  {tag}: {preview}")
+        console.print()
+
+    elif command == "/status":
+        console.print()
+        health_url = BASE_URL.replace("/v1", "") + "/api/health"
+        try:
+            req = urllib.request.Request(
+                health_url,
+                headers={"Authorization": f"Bearer {API_KEY}"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as r:
+                data = json.loads(r.read())
+            status = "[green]ONLINE ✓[/green]" if data.get("ok") else "[yellow]DEGRADED ⚠[/yellow]"
+        except Exception as e:
+            status = f"[red]OFFLINE ✗[/red] ({e})"
+        console.print(f"  Gateway : {BASE_URL}")
+        console.print(f"  Status  : {status}")
+        console.print(f"  Model   : {model_id}\n")
+
+    else:
+        console.print(f"  [yellow]Unknown:[/yellow] {command}  (type [bold]/help[/bold])\n")
+
+    return model_id, messages, True
+
+
+# ──────────────────────────────────────────────
+# Main
+# ──────────────────────────────────────────────
+def parse_args():
+    model = DEFAULT_MODEL
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        if args[i] in ("-m", "--model") and i + 1 < len(args):
+            model = args[i + 1]
+            i += 2
+        elif args[i] == "--select":
+            model = None   # trigger selector
+            i += 1
+        elif args[i] in ("-u", "--url") and i + 1 < len(args):
+            global BASE_URL
+            BASE_URL = args[i + 1]
+            i += 2
+        elif args[i] in ("-h", "--help"):
+            print("Usage: pips-cli [OPTIONS]")
+            print("")
+            print("Options:")
+            print("  -m, --model MODEL    Set model (default: ag/gemini-3.8-flash)")
+            print("  -u, --url URL        Set gateway URL")
+            print("      --select         Interactive model selector at startup")
+            print("  -h, --help           Show this help")
+            print("")
+            print("Environment variables:")
+            print("  PIPS_BASE_URL        Gateway URL (default: https://pips.dvikara.cloud/v1)")
+            print("  PIPS_API_KEY         API key")
+            sys.exit(0)
+        else:
+            i += 1
+    return model
+
+
+def main():
+    model_id = parse_args()
+
+    console.clear()
+
+    if model_id is None:
+        model_id = select_model()
+
+    print_header(model_id)
+
+    if not API_KEY:
+        console.print(Panel(
+            Text.from_markup(
+                "[yellow]⚠ API key not set[/yellow]\n\n"
+                "Set your API key:\n"
+                "  [cyan]export PIPS_API_KEY=your-key-here[/cyan]\n\n"
+                "Or add to [dim]~/.bashrc[/dim] / [dim]~/.zshrc[/dim]"
+            ),
+            border_style="yellow",
+            padding=(0, 1),
+        ))
+        console.print()
+
+    messages = [{
+        "role": "system",
+        "content": (
+            "You are PIPS AI, a helpful assistant powered by the PIPS personal AI infrastructure. "
+            "Be concise, precise, and helpful. When writing code, use proper formatting."
+        )
+    }]
+
+    while True:
+        console.print(Rule(style="dim"))
+        try:
+            user_input = input("  ❯ ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n  [dim]Use /exit to quit.[/dim]")
+            continue
+
+        if not user_input:
+            continue
+
+        save_history()
+
+        if user_input.startswith("/"):
+            model_id, messages, cont = handle_slash(user_input, model_id, messages)
+            if not cont:
+                break
+            continue
+
+        console.print()
+        console.print(f"  [bold white]You[/bold white]")
+        console.print(f"  {user_input}")
+
+        messages.append({"role": "user", "content": user_input})
+        response = render_response(model_id, messages)
+        if response:
+            messages.append({"role": "assistant", "content": response})
+
+    save_history()
+
+
+if __name__ == "__main__":
+    main()
