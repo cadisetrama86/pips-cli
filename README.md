@@ -1,21 +1,22 @@
 # PIPS CLI
 
 ```
-  ██████╗ ██╗██████╗ ███████╗
-  ██╔══██╗██║██╔══██╗██╔════╝
-  ██████╔╝██║██████╔╝███████╗
-  ██╔═══╝ ██║██╔═══╝ ╚════██║
-  ██║     ██║██║     ███████║
-  ╚═╝     ╚═╝╚═╝     ╚══════╝
+ ██████╗ ██╗██████╗ ███████╗
+ ██╔══██╗██║██╔══██╗██╔════╝
+ ██████╔╝██║██████╔╝███████╗
+ ██╔═══╝ ██║██╔═══╝ ╚════██║
+ ██║     ██║██║     ███████║
+ ╚═╝     ╚═╝╚═╝     ╚══════╝
 ```
 
 **Personal AI Infrastructure & Pipeline Server**
 
-CLI chat client untuk gateway AI **pips.dvikara.cloud** — akses Gemini, Claude, GPT dan model lainnya langsung dari terminal, dengan streaming response dan tampilan rich TUI.
+CLI chat client berbasis terminal untuk gateway AI **pips.dvikara.cloud**.  
+Streaming response, tampilan rich TUI, dukungan banyak model AI (Gemini, Claude, GPT, dan lainnya).
 
 ---
 
-## Install
+## Cara Install
 
 ### 🐧 Linux
 
@@ -29,33 +30,28 @@ pips-cli
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/install.sh | bash
-source ~/.zshrc    # atau ~/.bash_profile
+source ~/.zshrc
 pips-cli
 ```
 
-> Kalau belum ada Python: `brew install python3`
+> Belum ada Python? Install dulu: `brew install python3`
 
 ### 🪟 Windows — PowerShell
 
-Buka **PowerShell** (Run as Administrator untuk pertama kali):
-
 ```powershell
-# Izinkan script execution (sekali saja)
+# Izinkan script (sekali saja)
 Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 # Install
 iwr -useb https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/install.ps1 | iex
 ```
 
-Setelah install, **restart terminal** lalu:
+Setelah selesai, **restart terminal** lalu jalankan `pips-cli`.
 
-```powershell
-pips-cli
-```
+> Belum ada Python? Download di https://www.python.org/downloads/  
+> Saat install, centang **"Add Python to PATH"**.
 
-> Kalau belum ada Python: download dari https://www.python.org/downloads/ — centang **"Add Python to PATH"** saat install.
-
-### 🪟 Windows — WSL (Windows Subsystem for Linux)
+### 🪟 Windows — WSL
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/install.sh | bash
@@ -63,89 +59,135 @@ source ~/.bashrc
 pips-cli
 ```
 
+### Requirements
+
+- Python 3.8+
+- Library `rich` — diinstall otomatis oleh installer
+
 ---
 
 ## Cara Pakai
 
+### Mulai chat
+
 ```bash
-pips-cli                          # Start chat, default model
-pips-cli --select                 # Pilih model di awal
-pips-cli -m ag/claude-sonnet-4-6  # Langsung pakai model tertentu
-pips-cli --help                   # Semua opsi
+pips-cli
 ```
 
-### Perintah dalam Chat
+Langsung masuk ke chat dengan model default (Gemini 3.8 Flash).
+
+### Pilih model di awal
+
+```bash
+pips-cli --select
+```
+
+Menampilkan daftar model untuk dipilih sebelum mulai chat.
+
+### Langsung set model tertentu
+
+```bash
+pips-cli ag/claude-sonnet-4-6
+```
+
+### Contoh sesi chat
+
+```
+❯ jelaskan apa itu REST API
+❯ buatkan contoh kode Python untuk membuat REST API
+❯ /model          ← ganti model
+❯ /clear          ← hapus riwayat
+❯ /exit           ← keluar
+```
+
+---
+
+## Perintah dalam Chat
 
 | Perintah | Fungsi |
 |----------|--------|
-| `/model` | Ganti model AI |
-| `/models` | Lihat semua model |
-| `/clear` | Hapus riwayat chat |
-| `/history` | Tampilkan percakapan |
-| `/status` | Cek koneksi gateway |
-| `/help` | Bantuan |
-| `/exit` | Keluar |
+| `/model` | Ganti model AI (tampil selector) |
+| `/models` | Lihat semua model + ID-nya |
+| `/clear` | Hapus riwayat chat, mulai baru |
+| `/history` | Tampilkan percakapan saat ini |
+| `/status` | Cek status koneksi ke gateway |
+| `/help` | Tampilkan semua perintah |
+| `/exit` | Keluar dari pips-cli |
+
+> Tips: gunakan tombol ↑↓ untuk navigasi riwayat input.
 
 ---
 
 ## Daftar Model
 
-| # | Model | Keterangan |
-|---|-------|-----------|
-| 1 | `ag/gemini-3.8-flash` | Default — Coding & General ⚡ |
-| 2 | `ag/gemini-3.8-flash-high` | Kualitas tinggi |
-| 3 | `ag/gemini-3.8-flash-low` | Hemat kuota 🪶 |
-| 4 | `ag/claude-sonnet-4-6` | Reasoning & Analisis 🧠 |
-| 5 | `ag/claude-opus-4-6-thinking` | Deep reasoning 💡 |
-| 6 | `ag/gemini-pro-agent` | Agentic tasks 🤖 |
-| 7 | `ag/gpt-oss-120b-medium` | Open source model |
-| 8 | `ag/gemini-3-flash` | Tugas ringan 🌀 |
-| 9 | `ag/gemini-3-flash-agent` | Agent ringan |
+| # | Model ID | Nama | Keterangan |
+|---|----------|------|-----------|
+| 1 | `ag/gemini-3.8-flash` | Gemini 3.8 Flash | Default — Coding & General ⚡ |
+| 2 | `ag/gemini-3.8-flash-high` | Gemini 3.8 Flash High | Kualitas lebih tinggi |
+| 3 | `ag/gemini-3.8-flash-low` | Gemini 3.8 Flash Low | Hemat kuota 🪶 |
+| 4 | `ag/claude-sonnet-4-6` | Claude Sonnet 4.6 | Reasoning & Analisis 🧠 |
+| 5 | `ag/claude-opus-4-6-thinking` | Claude Opus Thinking | Deep Reasoning 💡 |
+| 6 | `ag/gemini-pro-agent` | Gemini Pro Agent | Agentic 🤖 |
+| 7 | `ag/gpt-oss-120b-medium` | GPT OSS 120B | Open Source Model |
+| 8 | `ag/gemini-3-flash` | Gemini 3 Flash | Tugas Ringan 🌀 |
+| 9 | `ag/gemini-3-flash-agent` | Gemini 3 Flash Agent | Agent Ringan |
+
+Gunakan `/model` di dalam chat untuk ganti model kapan saja.
 
 ---
 
 ## Konfigurasi
 
-### API Key
+Tidak perlu setup — API key dan gateway URL sudah terisi otomatis.
 
-**Linux / macOS:**
+Kalau ingin override (opsional):
+
 ```bash
+# Linux / macOS
+export PIPS_BASE_URL="https://pips.dvikara.cloud/v1"
 export PIPS_API_KEY="your-api-key"
-echo 'export PIPS_API_KEY="your-api-key"' >> ~/.bashrc
 ```
 
-**Windows PowerShell:**
 ```powershell
+# Windows PowerShell
+$env:PIPS_BASE_URL = "https://pips.dvikara.cloud/v1"
 $env:PIPS_API_KEY = "your-api-key"
-# Permanen:
-[System.Environment]::SetEnvironmentVariable("PIPS_API_KEY", "your-api-key", "User")
 ```
 
-### Config file (semua OS)
+Atau buat file `~/.pips/pips.env`:
 
-Buat `~/.pips/pips.env`:
 ```env
-PIPS_API_KEY=your-api-key
 PIPS_BASE_URL=https://pips.dvikara.cloud/v1
+PIPS_API_KEY=your-api-key
 ```
 
 ---
 
 ## Update
 
-Jalankan ulang installer sesuai OS masing-masing.
+Jalankan ulang installer sesuai OS:
+
+```bash
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/install.sh | bash
+```
+
+```powershell
+# Windows
+iwr -useb https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/install.ps1 | iex
+```
 
 ---
 
 ## Uninstall
 
-**Linux / macOS:**
 ```bash
+# Linux / macOS
 rm ~/.local/bin/pips-cli
 ```
 
-**Windows:**
 ```powershell
+# Windows
 Remove-Item "$env:USERPROFILE\.local\bin\pips-cli.py"
 Remove-Item "$env:USERPROFILE\.local\bin\pips-cli.cmd"
 ```
@@ -156,32 +198,20 @@ Remove-Item "$env:USERPROFILE\.local\bin\pips-cli.cmd"
 
 **`pips-cli: command not found`**
 ```bash
-source ~/.bashrc          # Linux
-source ~/.zshrc           # macOS
-# Atau: export PATH="$HOME/.local/bin:$PATH"
+source ~/.bashrc    # Linux
+source ~/.zshrc     # macOS
 ```
 
-**`Error: 'rich' library not found`**
+**`ModuleNotFoundError: No module named 'rich'`**
 ```bash
-pip3 install rich         # Linux / macOS
-pip install rich          # Windows
+pip3 install rich
 ```
 
-**Tidak bisa konek / connection error**
+**Connection error / tidak bisa konek**
 ```bash
-pips-cli           # lalu ketik /status
+# Cek status gateway
+pips-cli   # lalu ketik /status
 ```
-
----
-
-## Requirements
-
-| | Linux | macOS | Windows |
-|-|-------|-------|---------|
-| Python | 3.8+ | 3.8+ | 3.8+ |
-| pip | ✓ | ✓ | ✓ |
-| rich | auto-install | auto-install | auto-install |
-| curl/wget | ✓ | ✓ (built-in) | PowerShell |
 
 ---
 

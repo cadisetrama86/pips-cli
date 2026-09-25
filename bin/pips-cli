@@ -32,7 +32,7 @@ from rich import box
 # ──────────────────────────────────────────────
 # Config
 # ──────────────────────────────────────────────
-PIPS_BASE_URL  = os.environ.get("PIPS_BASE_URL",  "http://127.0.0.1:20128/v1")
+PIPS_BASE_URL  = os.environ.get("PIPS_BASE_URL",  "https://pips.dvikara.cloud/v1")
 PIPS_API_KEY   = os.environ.get("PIPS_API_KEY",   "sk-ffcd49f104f5ca66-hs6zum-6bae8b1c")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", PIPS_API_KEY)
 
