@@ -1,142 +1,115 @@
 # PIPS CLI
 
-> Interactive AI chat for the terminal — powered by [PIPS](https://pips.dvikara.cloud) personal AI gateway.
-
 ```
-╭──────────────────────────────────────────────────────────╮
-│ PIPS — Personal AI Infrastructure & Pipeline Server      │
-│ Gateway: https://pips.dvikara.cloud/v1                   │
-│ Model:   Gemini 3.8 Flash — Coding Default ⚡            │
-│ Type /help for commands • /model to switch • /exit       │
-╰──────────────────────────────────────────────────────────╯
-
-  ❯ explain what a closure is in javascript
-  
-  ● Gemini 3.8 Flash
-  A closure is a function that retains access to variables
-  from its outer scope even after that scope has closed...
+  ██████╗ ██╗██████╗ ███████╗
+  ██╔══██╗██║██╔══██╗██╔════╝
+  ██████╔╝██║██████╔╝███████╗
+  ██╔═══╝ ██║██╔═══╝ ╚════██║
+  ██║     ██║██║     ███████║
+  ╚═╝     ╚═╝╚═╝     ╚══════╝
 ```
 
-## Features
+**Personal AI Infrastructure & Pipeline Server** — CLI chat client untuk gateway AI [pips.dvikara.cloud](https://pips.dvikara.cloud).
 
-- **Streaming responses** — tokens appear in real-time
-- **Thinking indicator** — spinner while model processes
-- **Markdown rendering** — code blocks, bold, lists formatted
-- **Model switcher** — switch between Gemini, Claude, GPT OSS
-- **Chat history** — context maintained across turns
-- **Input history** — ↑↓ arrow keys to navigate previous inputs
-- **Slash commands** — `/model`, `/clear`, `/status`, `/help`
+Akses model-model AI (Gemini, Claude, GPT, dan lainnya) langsung dari terminal, dengan tampilan rich TUI dan streaming response.
 
-## Requirements
+---
 
-- Python 3.8+
-- `rich` library
-- PIPS API key (get from your PIPS gateway admin)
-
-## Install
-
-### One-liner
+## Install (one-liner)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/install.sh | bash
 ```
 
-### Manual
+Setelah install:
 
 ```bash
-# Clone repo
-git clone https://github.com/cadisetrama86/pips-cli.git
-cd pips-cli
-
-# Install rich
-pip install rich
-
-# Install
-chmod +x bin/pips-cli
-cp bin/pips-cli ~/.local/bin/pips-cli
+source ~/.bashrc   # atau ~/.zshrc
+pips-cli
 ```
 
-## Configuration
+### Requirements
 
-Set environment variables in your `~/.bashrc` or `~/.zshrc`:
+- Python 3.8+
+- `rich` library (diinstall otomatis oleh installer)
 
-```bash
-export PIPS_API_KEY="your-api-key-here"
-
-# Optional: override gateway URL (default: https://pips.dvikara.cloud/v1)
-# For local VM usage:
-# export PIPS_BASE_URL="http://127.0.0.1:20128/v1"
-```
+---
 
 ## Usage
 
 ```bash
-# Start chat with default model (Gemini 3.8 Flash)
-pips-cli
-
-# Choose model at startup
-pips-cli --select
-
-# Set model directly
-pips-cli --model ag/claude-sonnet-4-6
-
-# Override gateway URL
-pips-cli --url http://127.0.0.1:20128/v1
-
-# Show help
-pips-cli --help
+pips-cli                  # Start chat, default model
+pips-cli --select         # Pilih model di awal
+pips-cli -m ag/claude-sonnet-4-6   # Langsung pakai model tertentu
+pips-cli --help           # Semua opsi
 ```
 
-## Available Models
+### Slash Commands (dalam chat)
 
-| # | Model ID | Description |
-|---|----------|-------------|
-| 1 | `ag/gemini-3.8-flash` | Coding Default ⚡ |
-| 2 | `ag/gemini-3.8-flash-high` | High Quality |
-| 3 | `ag/gemini-3.8-flash-low` | Low Quota 🪶 |
-| 4 | `ag/claude-sonnet-4-6` | Reasoning 🧠 |
-| 5 | `ag/claude-opus-4-6-thinking` | Deep Reasoning 💡 |
-| 6 | `ag/gemini-pro-agent` | Agentic 🤖 |
-| 7 | `ag/gpt-oss-120b-medium` | Open Source |
-| 8 | `ag/gemini-3-flash` | Light Tasks 🌀 |
-| 9 | `ag/gemini-3-flash-agent` | Agent Light |
+| Command | Fungsi |
+|---------|--------|
+| `/model` | Ganti model AI |
+| `/models` | List semua model |
+| `/clear` | Bersihkan chat history |
+| `/history` | Lihat percakapan |
+| `/status` | Cek status gateway |
+| `/help` | Bantuan |
+| `/exit` | Keluar |
 
-## Slash Commands
+---
 
-| Command | Description |
-|---------|-------------|
-| `/model` | Switch AI model interactively |
-| `/models` | List all available models |
-| `/clear` | Clear chat history |
-| `/history` | Show conversation history |
-| `/status` | Check gateway connection status |
-| `/help` | Show help |
-| `/exit` | Quit |
+## Models
 
-## Architecture
+| # | Model ID | Nama | Keterangan |
+|---|----------|------|-----------|
+| 1 | `ag/gemini-3.8-flash` | Gemini 3.8 Flash | Coding Default ⚡ |
+| 2 | `ag/gemini-3.8-flash-high` | Gemini 3.8 Flash High | High Quality |
+| 3 | `ag/gemini-3.8-flash-low` | Gemini 3.8 Flash Low | Low Quota 🪶 |
+| 4 | `ag/claude-sonnet-4-6` | Claude Sonnet 4.6 | Reasoning 🧠 |
+| 5 | `ag/claude-opus-4-6-thinking` | Claude Opus Thinking | Deep Reasoning 💡 |
+| 6 | `ag/gemini-pro-agent` | Gemini Pro Agent | Agentic 🤖 |
+| 7 | `ag/gpt-oss-120b-medium` | GPT OSS 120B | Open Source |
+| 8 | `ag/gemini-3-flash` | Gemini 3 Flash | Light Tasks 🌀 |
+| 9 | `ag/gemini-3-flash-agent` | Gemini 3 Flash Agent | Agent Light |
 
-```
-pips-cli (your computer)
-    │
-    │  HTTPS
-    ▼
-pips.dvikara.cloud
-    │
-    │  Cloudflare Tunnel
-    ▼
-9Router (VM)  :20128
-    │
-    │  Antigravity
-    ▼
-AI Providers (Gemini, Claude, GPT OSS...)
-```
+---
 
-## Local VM Usage
+## Configuration
 
-If you have your own PIPS setup running locally:
+### Environment variables
 
 ```bash
-export PIPS_BASE_URL="http://127.0.0.1:20128/v1"
-export PIPS_API_KEY="your-local-key"
-pips-cli
+export PIPS_API_KEY="your-api-key"
+export PIPS_BASE_URL="https://pips.dvikara.cloud/v1"   # optional
 ```
+
+### Config file (opsional)
+
+Buat `~/.pips/pips.env`:
+
+```env
+PIPS_API_KEY=your-api-key
+PIPS_BASE_URL=https://pips.dvikara.cloud/v1
+```
+
+---
+
+## Update
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/install.sh | bash
+```
+
+---
+
+## Uninstall
+
+```bash
+rm ~/.local/bin/pips-cli
+```
+
+---
+
+## License
+
+MIT
