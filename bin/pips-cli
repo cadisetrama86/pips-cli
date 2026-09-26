@@ -7,6 +7,7 @@ Cross-platform: Linux, macOS, Windows (PowerShell/CMD/WSL)
 
 import os
 import sys
+import re
 import json
 import time
 import socket
@@ -381,7 +382,11 @@ class TokenOptimizer:
             return (
                 f"You are PIPS AI, an intelligent coding and technical assistant running locally via Ollama ({clean_name}).\n"
                 f"Active environment: {cwd} ({os_name}, user: {user_name}).\n"
-                f"Instructions: Answer helpfully, accurately, and concisely in the user's preferred language (e.g. Indonesian/English). Provide direct code and explanations. If asked what model you are running, state you are {clean_name} running locally on Ollama (0 cloud tokens)."
+                f"Strict Guidelines:\n"
+                f"- Answer helpfully, accurately, and concisely in the user's preferred language (e.g. Indonesian/English).\n"
+                f"- Provide direct, complete, runnable code without placeholders or omitted sections.\n"
+                f"- NEVER output abbreviation tokens or suffix strings like '→ skipped: [X], add when [Y]'.\n"
+                f"- If asked what model you are running, explicitly state that you are {clean_name} running on local Ollama (0 cloud tokens)."
             )
         else:
             return (
@@ -815,6 +820,35 @@ class ThinkingIndicator:
             self._live.stop()
 
 
+def clean_stream_generator(gen):
+    """Filters out proxy compression artifacts (e.g. '→ skipped: [X]') in real-time streaming."""
+    buffer = ""
+    for chunk in gen:
+        buffer += chunk
+        while "\n" in buffer:
+            line, buffer = buffer.split("\n", 1)
+            trimmed = line.strip()
+            if (
+                trimmed.startswith("→ skipped:")
+                or "→ skipped: [X]" in trimmed
+                or trimmed.startswith("skipped: [X]")
+                or "add when [Y]" in trimmed
+            ):
+                continue
+            yield line + "\n"
+    if buffer:
+        trimmed = buffer.strip()
+        if not (
+            trimmed.startswith("→ skipped:")
+            or "→ skipped: [X]" in trimmed
+            or trimmed.startswith("skipped: [X]")
+            or "add when [Y]" in trimmed
+        ):
+            cleaned = re.sub(r'→?\s*skipped:.*', '', buffer)
+            if cleaned:
+                yield cleaned
+
+
 def render_response(model_id: str, messages: list) -> str:
     """Stream tokens directly with smart hybrid route resolution & token metric tracking."""
     target_model, is_local_direct, route_badge = auto_router.resolve_route(messages, model_id)
@@ -825,7 +859,8 @@ def render_response(model_id: str, messages: list) -> str:
     in_tokens = max(1, prompt_chars // 4)
 
     try:
-        gen = stream_chat(active_msgs, target_model, is_local_direct=is_local_direct)
+        raw_gen = stream_chat(active_msgs, target_model, is_local_direct=is_local_direct)
+        gen = clean_stream_generator(raw_gen)
     except Exception as e:
         console.print(f"\n  [bold red]✗ Error:[/bold red] {e}\n")
         return ""
