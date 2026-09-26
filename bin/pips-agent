@@ -172,7 +172,7 @@ class VPSTools:
 
     @staticmethod
     def file_edit(path: str, old_content: str, new_content: str) -> dict:
-        """Replace text in a file."""
+        """Replace text in a file with unified diff preview."""
         expanded = os.path.expanduser(path)
         if not os.path.exists(expanded):
             return {"ok": False, "error": f"File not found: {path}"}
@@ -192,7 +192,55 @@ class VPSTools:
             with open(expanded, "w", encoding="utf-8") as f:
                 f.write(updated)
 
-            return {"ok": True, "path": path, "replaced": True}
+            # Generate unified diff
+            import difflib
+            diff_lines = list(difflib.unified_diff(
+                old_content.splitlines(keepends=True),
+                new_content.splitlines(keepends=True),
+                fromfile=f"a/{os.path.basename(path)}",
+                tofile=f"b/{os.path.basename(path)}"
+            ))
+            diff_text = "".join(diff_lines)
+
+            return {"ok": True, "path": path, "replaced": True, "diff": diff_text}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @staticmethod
+    def preview_server(directory: str = ".", port: int = 3000) -> dict:
+        """Launch background HTTP preview server for web projects."""
+        import threading
+        from http.server import HTTPServer, SimpleHTTPRequestHandler
+
+        expanded = os.path.expanduser(directory)
+        if not os.path.exists(expanded):
+            return {"ok": False, "error": f"Directory not found: {directory}"}
+
+        chosen_port = port
+        for p in range(port, port + 20):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                if s.connect_ex(("127.0.0.1", p)) != 0:
+                    chosen_port = p
+                    break
+
+        class CustomHandler(SimpleHTTPRequestHandler):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, directory=os.path.abspath(expanded), **kwargs)
+            def log_message(self, format, *args):
+                pass
+
+        try:
+            httpd = HTTPServer(("0.0.0.0", chosen_port), CustomHandler)
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            url = f"http://localhost:{chosen_port}"
+            return {
+                "ok": True,
+                "port": chosen_port,
+                "url": url,
+                "directory": os.path.abspath(expanded),
+                "message": f"Preview live at {url}"
+            }
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -432,6 +480,20 @@ TOOL_DEFINITIONS = [
                 }
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "preview_server",
+            "description": "Start an instant local HTTP preview server (e.g. for HTML/JS/CSS websites) and return the localhost URL.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "directory": {"type": "string", "description": "Folder to serve (default: current directory .)"},
+                    "port": {"type": "integer", "description": "Port to serve on (default: 3000)"}
+                }
+            }
+        }
     }
 ]
 
@@ -462,7 +524,8 @@ class PIPSAgent:
             f"4. For shell commands, use syntax matching {os_platform} (e.g. dir/Get-ChildItem on Windows, ls on Linux/macOS).\n"
             f"5. Be proactive: run commands or read files to gather facts before answering.\n"
             f"6. Task Completion Priority: When asked to build a website, web page, or code project, ALWAYS create the primary HTML, CSS, and JS files FIRST using file_write before attempting optional asset downloads or secondary scripts. Never stop until the actual HTML and CSS files are completely written.\n"
-            f"7. Use file_write to write files directly. Avoid writing multi-line inline scripts in bash_run if file_write can create the file directly."
+            f"7. Use file_write to write files directly. Avoid writing multi-line inline scripts in bash_run if file_write can create the file directly.\n"
+            f"8. When you finish building a web project, you can launch preview_server to let the user immediately preview it in their browser."
         )
 
     def dispatch_tool(self, name: str, args: dict) -> dict:
@@ -482,6 +545,8 @@ class PIPSAgent:
                 return VPSTools.file_edit(args.get("path", ""), args.get("old_content", ""), args.get("new_content", ""))
             elif name == "file_list":
                 return VPSTools.file_list(args.get("path", "."), int(args.get("max_depth", 2)))
+            elif name == "preview_server":
+                return VPSTools.preview_server(args.get("directory", "."), int(args.get("port", 3000)))
             else:
                 return {"ok": False, "error": f"Unknown tool: {name}"}
         except Exception as e:
@@ -508,6 +573,56 @@ class PIPSAgent:
             body = resp.read().decode("utf-8")
             return json.loads(body)
 
+    @staticmethod
+    def load_session() -> list:
+        session_file = os.path.expanduser("~/.pips/agent_session.json")
+        try:
+            if os.path.exists(session_file):
+                with open(session_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                # Valid for 2 hours in the same working directory
+                if time.time() - data.get("updated_at", 0) < 7200 and data.get("cwd") == os.getcwd():
+                    return data.get("messages", [])
+        except Exception:
+            pass
+        return []
+
+    @staticmethod
+    def save_session(messages: list):
+        session_file = os.path.expanduser("~/.pips/agent_session.json")
+        try:
+            os.makedirs(os.path.dirname(session_file), exist_ok=True)
+            compacted = []
+            for m in messages:
+                content = m.get("content", "")
+                if m.get("role") == "tool" and len(content) > 1200:
+                    m_copy = dict(m)
+                    m_copy["content"] = content[:1200] + "... [truncated in session history]"
+                    compacted.append(m_copy)
+                else:
+                    compacted.append(m)
+
+            if len(compacted) > 25:
+                compacted = [compacted[0]] + compacted[-24:]
+
+            with open(session_file, "w", encoding="utf-8") as f:
+                json.dump({
+                    "cwd": os.getcwd(),
+                    "updated_at": time.time(),
+                    "messages": compacted
+                }, f)
+        except Exception:
+            pass
+
+    @staticmethod
+    def clear_session():
+        session_file = os.path.expanduser("~/.pips/agent_session.json")
+        try:
+            if os.path.exists(session_file):
+                os.remove(session_file)
+        except Exception:
+            pass
+
     def run(self, user_prompt: str, history: list = None, event_callback=None, max_steps: int = 35) -> tuple[str, list]:
         """
         Run the ReAct autonomous loop.
@@ -515,7 +630,11 @@ class PIPSAgent:
         event_type: 'thought' | 'tool_call' | 'tool_result' | 'final_answer' | 'error'
         """
         if history is None:
-            messages = [{"role": "system", "content": self.system_prompt}]
+            saved = self.load_session()
+            if saved:
+                messages = saved
+            else:
+                messages = [{"role": "system", "content": self.system_prompt}]
         else:
             messages = list(history)
 
@@ -523,6 +642,8 @@ class PIPSAgent:
 
         step = 0
         final_answer = ""
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
 
         while step < max_steps:
             step += 1
@@ -544,6 +665,10 @@ class PIPSAgent:
                 if event_callback:
                     event_callback("error", {"error": err_msg})
                 return err_msg, messages
+
+            usage = resp.get("usage", {})
+            total_prompt_tokens += usage.get("prompt_tokens", 0)
+            total_completion_tokens += usage.get("completion_tokens", 0)
 
             choices = resp.get("choices", [])
             if not choices:
@@ -601,6 +726,11 @@ class PIPSAgent:
             final_answer = "⚠ Selesai hingga batas langkah eksekusi (35 steps). Semua file dan aset yang telah dibuat tersimpan aman. Ketik instruksi lanjutan untuk melanjutkan jika masih ada yang diperlukan."
             if event_callback:
                 event_callback("final_answer", {"content": final_answer})
+
+        self.save_session(messages)
+
+        if total_completion_tokens > 0 and HAS_RICH and console:
+            console.print(f"  [dim]⚡ Used ~{total_prompt_tokens + total_completion_tokens:,} tokens ({total_prompt_tokens:,} in, {total_completion_tokens:,} out) in {step} steps[/dim]\n")
 
         return final_answer, messages
 
@@ -1199,12 +1329,25 @@ def run_cli(prompt: str = None):
                         summary = f"[dim]read {res.get('total_read', 0)} lines[/dim]"
                     elif name == "file_edit":
                         summary = "[dim]updated content[/dim]"
+                    elif name == "preview_server":
+                        summary = f"[dim]preview live at[/dim] [bold cyan]{res.get('url')}[/bold cyan]"
                     elif name == "bash_run":
                         summary = f"[dim]exit {res.get('exit_code', 0)} in {res.get('duration_seconds', 0)}s[/dim]"
                     else:
                         out = res.get("stdout") or str(res)
                         summary = "[dim]" + out.strip().replace("\n", " ")[:100] + "[/dim]"
                     console.print(f"  [bold green]✓ Done[/bold green] {summary}")
+
+                    if res.get("diff"):
+                        console.print()
+                        for dline in res.get("diff").splitlines()[:25]:
+                            if dline.startswith("+") and not dline.startswith("+++"):
+                                console.print(f"    [green]{dline}[/green]")
+                            elif dline.startswith("-") and not dline.startswith("---"):
+                                console.print(f"    [red]{dline}[/red]")
+                            elif dline.startswith("@"):
+                                console.print(f"    [cyan]{dline}[/cyan]")
+                        console.print()
                 else:
                     err = res.get("error", "action failed")
                     console.print(f"  [bold red]✗ Failed:[/bold red] [yellow]{err}[/yellow]")
