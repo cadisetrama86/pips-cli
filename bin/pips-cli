@@ -712,6 +712,7 @@ def stream_chat(messages: list, target_model: str, is_local_direct: bool = False
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=90) as resp:
+                yielded_local = False
                 for raw_line in resp:
                     line = raw_line.decode("utf-8", errors="replace").strip()
                     if not line or line == "data: [DONE]":
@@ -725,12 +726,15 @@ def stream_chat(messages: list, target_model: str, is_local_direct: bool = False
                                 delta = choices[0].get("delta", {})
                                 content = delta.get("content", "")
                                 if content:
+                                    yielded_local = True
                                     yield content
                         except json.JSONDecodeError:
                             pass
-            return
-        except Exception:
-            # If local Ollama connection fails or runner crashed, smoothly fallback to cloud gateway
+                if yielded_local:
+                    return
+        except Exception as e:
+            err_msg = str(e).strip()
+            console.print(f"  [dim yellow]⚠ Ollama lokal ({target_model}) tidak merespons: {err_msg[:60]}. Beralih ke Cloud AI...[/dim yellow]\n")
             target_model = "ag/gemini-3.8-flash"
             is_local_direct = False
 
