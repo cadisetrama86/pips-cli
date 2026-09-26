@@ -378,13 +378,13 @@ class TokenOptimizer:
         if is_local or TokenOptimizer.is_local_model(model_id):
             # Hermes / Local Compact High-Density System Prompt (saves ~200+ tokens per turn)
             return (
-                f"You are PIPS AI (Local Accelerator Mode).\n"
+                f"You are PIPS AI powered by local model '{model_id}' (running offline on Ollama).\n"
                 f"CWD: {cwd} ({os_name}, user: {user_name}).\n"
-                f"Rules: Provide direct, accurate answers and exact commands/code with zero unnecessary fluff. If tools or autonomous file changes are needed, suggest /agent."
+                f"Rules: Provide direct, accurate answers and exact commands/code with zero unnecessary fluff. If asked about your model, state you are running locally via Ollama ({model_id}). Suggest /agent for autonomous actions."
             )
         else:
             return (
-                f"You are PIPS AI, a helpful AI coding and system assistant powered by 9Router.\n"
+                f"You are PIPS AI, a helpful AI coding and system assistant powered by 9Router ({model_id}).\n"
                 f"Active environment:\n"
                 f"- Working Directory (CWD): {cwd}\n"
                 f"- Operating System: {os_name} ({sys.platform})\n"
