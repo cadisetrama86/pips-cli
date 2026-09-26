@@ -322,23 +322,24 @@ class SmartAutoRouter:
         """
         Resolves (effective_model_id, is_local_direct, route_display_badge).
         - If active_model_id is 'auto': decides whether to route locally (0 tokens) or cloud flash.
-        - If active_model_id is 'ollama/...': routes directly to local Ollama.
+        - If active_model_id is 'ollama/...': routes directly to local Ollama / 9Router Ollama bridge.
         - Else: routes to 9Router cloud.
         """
         mid_lower = (active_model_id or "").lower()
 
         if mid_lower.startswith("ollama/"):
             raw_local = active_model_id.split('/', 1)[1]
-            return raw_local, True, "Ollama Local (Direct)"
+            return active_model_id, True, f"Ollama Local ({raw_local})"
 
         if "hermes" in mid_lower and "/" not in active_model_id:
-            return active_model_id, True, "Ollama Local (Direct)"
+            return f"ollama/{active_model_id}", True, f"Ollama Local ({active_model_id})"
 
         if mid_lower == "auto":
             local_models = self.get_local_models()
             if local_models:
                 best_local = local_models[0]
-                return best_local, True, "Auto ⚡ Local Ollama (Free • 0 Cloud Tokens)"
+                full_id = f"ollama/{best_local}" if not best_local.startswith("ollama/") else best_local
+                return full_id, True, f"Auto ⚡ Local Ollama ({best_local})"
             else:
                 # Cloud free / flash fallback
                 return "ag/gemini-3.8-flash", False, "Auto ⚡ Cloud Flash"
@@ -695,48 +696,53 @@ def print_chat_header(model_id: str, is_agent: bool = False):
 # ──────────────────────────────────────────────
 def stream_chat(messages: list, target_model: str, is_local_direct: bool = False):
     """Stream response from Ollama direct or 9Router, yielding tokens safely with auto-fallback."""
-    if is_local_direct:
-        # Try local direct stream first (0 cloud token overhead, 100% free)
-        url = f"{OLLAMA_BASE_URL}/v1/chat/completions"
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "text/event-stream",
-            "User-Agent": "pips-cli/2.0",
-        }
-        payload = json.dumps({
-            "model": target_model,
-            "messages": messages,
-            "stream": True,
-        }).encode("utf-8")
+    clean_local = target_model.replace("ollama/", "") if target_model.startswith("ollama/") else target_model
 
-        req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-        try:
-            with urllib.request.urlopen(req, timeout=90) as resp:
-                yielded_local = False
-                for raw_line in resp:
-                    line = raw_line.decode("utf-8", errors="replace").strip()
-                    if not line or line == "data: [DONE]":
-                        continue
-                    if line.startswith("data: "):
-                        json_str = line[6:]
-                        try:
-                            chunk = json.loads(json_str)
-                            choices = chunk.get("choices") or []
-                            if choices and len(choices) > 0:
-                                delta = choices[0].get("delta", {})
-                                content = delta.get("content", "")
-                                if content:
-                                    yielded_local = True
-                                    yield content
-                        except json.JSONDecodeError:
-                            pass
-                if yielded_local:
-                    return
-        except Exception as e:
-            err_msg = str(e).strip()
-            console.print(f"  [dim yellow]⚠ Ollama lokal ({target_model}) tidak merespons: {err_msg[:60]}. Beralih ke Cloud AI...[/dim yellow]\n")
-            target_model = "ag/gemini-3.8-flash"
-            is_local_direct = False
+    if is_local_direct:
+        # 1. Try local direct port (e.g. http://127.0.0.1:11434)
+        for host in (OLLAMA_BASE_URL, "http://127.0.0.1:11434", "http://localhost:11434"):
+            url = f"{host}/v1/chat/completions"
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+                "User-Agent": "pips-cli/2.0",
+            }
+            payload = json.dumps({
+                "model": clean_local,
+                "messages": messages,
+                "stream": True,
+            }).encode("utf-8")
+
+            req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=90) as resp:
+                    yielded_local = False
+                    for raw_line in resp:
+                        line = raw_line.decode("utf-8", errors="replace").strip()
+                        if not line or line == "data: [DONE]":
+                            continue
+                        if line.startswith("data: "):
+                            json_str = line[6:]
+                            try:
+                                chunk = json.loads(json_str)
+                                choices = chunk.get("choices") or []
+                                if choices and len(choices) > 0:
+                                    delta = choices[0].get("delta", {})
+                                    content = delta.get("content", "")
+                                    if content:
+                                        yielded_local = True
+                                        yield content
+                            except json.JSONDecodeError:
+                                pass
+                    if yielded_local:
+                        return
+            except Exception:
+                pass
+
+        # 2. If direct port 11434 is unreachable on client, forward to 9Router Ollama bridge
+        target_model = f"ollama/{clean_local}"
+
+    # 9Router execution (Handles ollama/* or cloud models)
 
     # Standard 9Router Cloud upstream
     url = f"{ROUTER_BASE_URL}/chat/completions"
