@@ -460,7 +460,9 @@ class PIPSAgent:
             f"2. You have tools to execute shell commands, manage files, and inspect directory contents directly on this machine.\n"
             f"3. When asked to inspect, list files, trace, or check the current path, use your tools (like file_list or bash_run) immediately in {cwd}.\n"
             f"4. For shell commands, use syntax matching {os_platform} (e.g. dir/Get-ChildItem on Windows, ls on Linux/macOS).\n"
-            f"5. Be proactive: run commands or read files to gather facts before answering."
+            f"5. Be proactive: run commands or read files to gather facts before answering.\n"
+            f"6. Task Completion Priority: When asked to build a website, web page, or code project, ALWAYS create the primary HTML, CSS, and JS files FIRST using file_write before attempting optional asset downloads or secondary scripts. Never stop until the actual HTML and CSS files are completely written.\n"
+            f"7. Use file_write to write files directly. Avoid writing multi-line inline scripts in bash_run if file_write can create the file directly."
         )
 
     def dispatch_tool(self, name: str, args: dict) -> dict:
@@ -506,7 +508,7 @@ class PIPSAgent:
             body = resp.read().decode("utf-8")
             return json.loads(body)
 
-    def run(self, user_prompt: str, history: list = None, event_callback=None, max_steps: int = 10) -> tuple[str, list]:
+    def run(self, user_prompt: str, history: list = None, event_callback=None, max_steps: int = 35) -> tuple[str, list]:
         """
         Run the ReAct autonomous loop.
         event_callback(event_type, data) allows streaming events to UI/CLI/SSE:
@@ -594,6 +596,11 @@ class PIPSAgent:
                     "tool_call_id": call_id,
                     "content": json.dumps(result, ensure_ascii=False)
                 })
+
+        if not final_answer:
+            final_answer = "⚠ Selesai hingga batas langkah eksekusi (35 steps). Semua file dan aset yang telah dibuat tersimpan aman. Ketik instruksi lanjutan untuk melanjutkan jika masih ada yang diperlukan."
+            if event_callback:
+                event_callback("final_answer", {"content": final_answer})
 
         return final_answer, messages
 
