@@ -92,12 +92,17 @@ class VPSTools:
 
         try:
             start_t = time.time()
+            if sys.platform == "win32":
+                shell_cmd = ["powershell", "-NoProfile", "-Command", command]
+            else:
+                shell_cmd = ["bash", "-c", command]
+
             proc = subprocess.run(
-                ["bash", "-c", command],
+                shell_cmd,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                cwd=os.path.expanduser("~")
+                cwd=os.getcwd()
             )
             duration = round(time.time() - start_t, 2)
             stdout = proc.stdout
@@ -258,9 +263,9 @@ class VPSTools:
                 "used_gb": round(disk.used / (1024**3), 2),
                 "percent": disk.percent
             }
-            metrics["load_avg"] = [round(x, 2) for x in os.getloadavg()]
+            metrics["load_avg"] = [round(x, 2) for x in os.getloadavg()] if hasattr(os, "getloadavg") else [0.0, 0.0, 0.0]
         else:
-            metrics["load_avg"] = [round(x, 2) for x in os.getloadavg()]
+            metrics["load_avg"] = [round(x, 2) for x in os.getloadavg()] if hasattr(os, "getloadavg") else [0.0, 0.0, 0.0]
 
         # Docker status
         try:
@@ -439,14 +444,23 @@ class PIPSAgent:
         self.model_id = model_id
         self.base_url = base_url
         self.api_key = api_key
+
+        cwd = os.getcwd()
+        os_platform = "Windows" if sys.platform == "win32" else ("macOS" if sys.platform == "darwin" else "Linux")
+        username = os.environ.get("USERNAME") or os.environ.get("USER") or "user"
+
         self.system_prompt = (
-            "You are PIPS Agent, an autonomous AI system engineer operating directly on this VPS server.\n"
-            "You have access to powerful tools to execute bash commands, manage files, monitor VPS resources, and inspect Docker containers.\n"
-            "Guidelines:\n"
-            "1. Be proactive: when asked to check or fix something, use your tools to inspect the real state first.\n"
-            "2. Execute commands with precision. Before modifying files or restarting services, verify their current state.\n"
-            "3. After tool execution, analyze the output and take subsequent actions or summarize findings clearly to the user.\n"
-            "4. Format command outputs, code, and system metrics with clear markdown formatting."
+            f"You are PIPS Agent, an autonomous AI system and coding engineer.\n"
+            f"Active runtime environment:\n"
+            f"- Working Directory (CWD): {cwd}\n"
+            f"- Operating System: {os_platform} ({sys.platform})\n"
+            f"- User: {username}\n\n"
+            f"Guidelines:\n"
+            f"1. When the user refers to 'path ini', 'folder ini', 'disini', or current working directory, they mean: {cwd}.\n"
+            f"2. You have tools to execute shell commands, manage files, and inspect directory contents directly on this machine.\n"
+            f"3. When asked to inspect, list files, trace, or check the current path, use your tools (like file_list or bash_run) immediately in {cwd}.\n"
+            f"4. For shell commands, use syntax matching {os_platform} (e.g. dir/Get-ChildItem on Windows, ls on Linux/macOS).\n"
+            f"5. Be proactive: run commands or read files to gather facts before answering."
         )
 
     def dispatch_tool(self, name: str, args: dict) -> dict:

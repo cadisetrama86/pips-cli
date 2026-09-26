@@ -11,6 +11,7 @@ import sys
 import json
 import time
 import socket
+import shutil
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -137,13 +138,15 @@ def print_header(model_id: str, is_agent: bool = False):
 
     mode_label = "[bold magenta]🤖 AGENT MODE (VPS Control Active)[/bold magenta]" if is_agent else "[dim]Personal AI Infrastructure & Pipeline Server[/dim]"
 
+    cwd = os.getcwd()
     console.print()
     console.print(Panel(
         Text.from_markup(
             f"{ascii_text}\n\n"
             f"{mode_label}\n\n"
             f"[dim]Model   :[/dim] [bold green]{model_name}[/bold green]  [dim]{model_desc}[/dim]\n"
-            f"[dim]Model ID:[/dim] [blue]{model_id}[/blue]\n\n"
+            f"[dim]Model ID:[/dim] [blue]{model_id}[/blue]\n"
+            f"[dim]Workdir :[/dim] [yellow]{cwd}[/yellow]\n\n"
             f"[dim]Type [/dim][bold]/help[/bold][dim] for commands  •  [/dim][bold]/agent[/bold][dim] to toggle agent  •  [/dim][bold]/exit[/bold][dim] to quit[/dim]"
         ),
         border_style="cyan" if not is_agent else "magenta",
@@ -306,12 +309,25 @@ def render_response(model_id: str, messages: list) -> str:
 # Agent Client Integration (Local & Remote)
 # ──────────────────────────────────────────────
 def run_agent_turn(prompt: str, is_local_vps: bool = False):
-    """Execute turn using VPS Agent (either directly or via Agent Server)."""
-    # Check if local pips-agent script exists on this machine
-    local_agent_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pips-agent")
-    if os.path.exists(local_agent_path):
+    """Execute turn using Agent (either locally on current directory or via remote VPS Agent Server)."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    local_agent_path = None
+
+    for cand in ("pips-agent", "pips-agent.py", "pips-agent.cmd"):
+        fp = os.path.join(script_dir, cand)
+        if os.path.exists(fp):
+            local_agent_path = fp
+            break
+
+    if not local_agent_path and shutil.which("pips-agent"):
+        local_agent_path = shutil.which("pips-agent")
+
+    if local_agent_path:
         import subprocess
-        proc = subprocess.run([local_agent_path, prompt])
+        if local_agent_path.endswith(".py"):
+            proc = subprocess.run([sys.executable, local_agent_path, prompt], cwd=os.getcwd())
+        else:
+            proc = subprocess.run([local_agent_path, prompt], cwd=os.getcwd())
         return
 
     # Otherwise stream from remote Agent Server
@@ -536,8 +552,18 @@ def main():
         if is_agent:
             run_agent_turn(one_shot_prompt)
         else:
+            cwd = os.getcwd()
+            os_name = "Windows" if sys.platform == "win32" else ("macOS" if sys.platform == "darwin" else "Linux")
+            user_name = os.environ.get("USERNAME") or os.environ.get("USER") or "user"
             msgs = [
-                {"role": "system", "content": "You are PIPS AI, a helpful and precise assistant. Format answers clearly with markdown."},
+                {
+                    "role": "system",
+                    "content": (
+                        f"You are PIPS AI, a helpful coding and system assistant.\n"
+                        f"Active CWD: {cwd} on {os_name} (User: {user_name}).\n"
+                        f"When user refers to 'path ini', 'folder ini', 'disini', they mean {cwd}."
+                    )
+                },
                 {"role": "user", "content": one_shot_prompt}
             ]
             render_response(model_id, msgs)
@@ -547,12 +573,25 @@ def main():
     console.clear()
     print_header(model_id, is_agent)
 
+    cwd = os.getcwd()
+    os_name = "Windows" if sys.platform == "win32" else ("macOS" if sys.platform == "darwin" else "Linux")
+    user_name = os.environ.get("USERNAME") or os.environ.get("USER") or "user"
+
     messages = [
         {
             "role": "system",
             "content": (
-                "You are PIPS AI, a helpful assistant powered by the PIPS personal AI infrastructure. "
-                "Be concise, precise, and helpful. When writing code, use proper formatting."
+                f"You are PIPS AI, a helpful coding and system assistant powered by PIPS personal AI infrastructure.\n"
+                f"Active environment:\n"
+                f"- Working Directory (CWD): {cwd}\n"
+                f"- Operating System: {os_name} ({sys.platform})\n"
+                f"- Current User: {user_name}\n\n"
+                f"Important:\n"
+                f"When the user refers to 'path ini', 'folder ini', 'disini', 'current directory', or relative paths, "
+                f"they are referring to: {cwd}.\n"
+                f"If the user asks to inspect, read, or trace files in this path while you are in Chat mode, tell them the path is {cwd}, "
+                f"and explain that they can switch to Agent Mode using '/agent' or 'pips-cli agent' so you can run tools and list/read files automatically.\n"
+                f"Be concise, precise, and helpful."
             )
         }
     ]
