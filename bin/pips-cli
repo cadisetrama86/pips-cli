@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-pips-cli — Interactive AI Chat & Agent TUI
-Connects to PIPS / 9Router AI Gateway & PIPS Autonomous VPS Agent
-Inspired by kiro-cli style interface
+PIPS CLI — AI Development Companion & Autonomous Agent Client
+Pure terminal UI/UX with dynamic 9Router model discovery & interactive keyboard selector.
 Cross-platform: Linux, macOS, Windows (PowerShell/CMD/WSL)
 """
 
@@ -38,12 +37,12 @@ from rich.markdown import Markdown
 from rich.live import Live
 from rich.spinner import Spinner
 from rich.rule import Rule
-from rich.prompt import Prompt
-from rich.columns import Columns
 from rich import box
 
+console = Console()
+
 # ──────────────────────────────────────────────
-# Load Environment (~/.pips/pips.env)
+# Load Environment (~/.pips/pips.env & system)
 # ──────────────────────────────────────────────
 def load_env():
     pips_env = os.path.expanduser("~/.pips/pips.env")
@@ -59,37 +58,21 @@ def load_env():
 load_env()
 
 # ──────────────────────────────────────────────
-# Config
+# Configuration (Reusing existing env mechanisms)
 # ──────────────────────────────────────────────
-DEFAULT_GATEWAY = "https://pips.dvikara.cloud/v1"
-PIPS_BASE_URL  = os.environ.get("PIPS_BASE_URL", DEFAULT_GATEWAY).rstrip("/")
-PIPS_API_KEY   = os.environ.get("PIPS_API_KEY", "sk-ffcd49f104f5ca66-hs6zum-6bae8b1c")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", PIPS_API_KEY)
-API_KEY = PIPS_API_KEY or OPENAI_API_KEY or ""
+# Support ROUTER_BASE_URL or PIPS_BASE_URL
+DEFAULT_ROUTER_URL = "http://127.0.0.1:20128/v1" if os.path.exists("/home/afif-sofi/.9router") else "https://pips.dvikara.cloud/v1"
+ROUTER_BASE_URL = os.environ.get("ROUTER_BASE_URL", os.environ.get("PIPS_BASE_URL", DEFAULT_ROUTER_URL)).rstrip("/")
+
+# Support ROUTER_API_KEY, PIPS_API_KEY, OPENAI_API_KEY
+ROUTER_API_KEY = os.environ.get("ROUTER_API_KEY", os.environ.get("PIPS_API_KEY", os.environ.get("OPENAI_API_KEY", "sk-ffcd49f104f5ca66-hs6zum-6bae8b1c")))
+API_KEY = ROUTER_API_KEY
 
 PIPS_AGENT_URL = os.environ.get("PIPS_AGENT_URL", "http://127.0.0.1:20130").rstrip("/")
+DEFAULT_FALLBACK_MODEL = "ag/gemini-3.8-flash"
 
 # ──────────────────────────────────────────────
-# Model catalog (dari 9Router)
-# ──────────────────────────────────────────────
-MODELS = {
-    "1": ("ag/gemini-3.8-flash",          "Gemini 3.8 Flash",       "Coding Default ⚡"),
-    "2": ("ag/gemini-3.8-flash-high",     "Gemini 3.8 Flash High",  "High Quality"),
-    "3": ("ag/gemini-3.8-flash-low",      "Gemini 3.8 Flash Low",   "Low Quota 🪶"),
-    "4": ("ag/claude-sonnet-4-6",         "Claude Sonnet 4.6",      "Reasoning 🧠"),
-    "5": ("ag/claude-opus-4-6-thinking",  "Claude Opus Thinking",   "Deep Reasoning 💡"),
-    "6": ("ag/gemini-pro-agent",          "Gemini Pro Agent",       "Agentic 🤖"),
-    "7": ("ag/gpt-oss-120b-medium",       "GPT OSS 120B",           "Open Source"),
-    "8": ("ag/gemini-3-flash",            "Gemini 3 Flash",         "Light Tasks 🌀"),
-    "9": ("ag/gemini-3-flash-agent",      "Gemini 3 Flash Agent",   "Agent Light"),
-}
-
-DEFAULT_MODEL_ID = "ag/gemini-3.8-flash"
-
-console = Console()
-
-# ──────────────────────────────────────────────
-# Readline history setup (Safe for Windows)
+# Readline history setup
 # ──────────────────────────────────────────────
 HISTORY_FILE = os.path.expanduser("~/.pips/cli/.chat_history")
 if readline:
@@ -113,7 +96,298 @@ def save_history():
 
 
 # ──────────────────────────────────────────────
-# Header & ASCII Art
+# Cross-Platform Keyboard Input (Raw Keypress)
+# ──────────────────────────────────────────────
+def read_single_key() -> str:
+    """Reads a single keypress from terminal (Windows & Unix)."""
+    if not sys.stdin.isatty():
+        line = sys.stdin.readline()
+        return "ENTER" if line else "ESC"
+
+    if sys.platform == "win32":
+        import msvcrt
+        ch = msvcrt.getwch()
+        if ch in ('\x00', '\xe0'):
+            ch2 = msvcrt.getwch()
+            if ch2 == 'H': return 'UP'
+            elif ch2 == 'P': return 'DOWN'
+            elif ch2 == 'K': return 'LEFT'
+            elif ch2 == 'M': return 'RIGHT'
+            return ''
+        elif ch in ('\r', '\n'): return 'ENTER'
+        elif ch == '\x1b': return 'ESC'
+        elif ch == '\x08': return 'BACKSPACE'
+        elif ch == '\x03': raise KeyboardInterrupt
+        return ch
+    else:
+        import termios, tty, select
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setcbreak(fd)
+            ch = sys.stdin.read(1)
+            if ch == '\x1b':
+                # Check if this is an arrow key sequence
+                r, _, _ = select.select([sys.stdin], [], [], 0.05)
+                if r:
+                    ch2 = sys.stdin.read(1)
+                    if ch2 == '[':
+                        ch3 = sys.stdin.read(1)
+                        if ch3 == 'A': return 'UP'
+                        elif ch3 == 'B': return 'DOWN'
+                        elif ch3 == 'C': return 'RIGHT'
+                        elif ch3 == 'D': return 'LEFT'
+                return 'ESC'
+            elif ch in ('\r', '\n'): return 'ENTER'
+            elif ch in ('\x7f', '\x08'): return 'BACKSPACE'
+            elif ch == '\x03': raise KeyboardInterrupt
+            return ch
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+# ──────────────────────────────────────────────
+# Dynamic Model Discovery Service
+# ──────────────────────────────────────────────
+class ModelService:
+    def __init__(self, base_url: str, api_key: str):
+        self.base_url = base_url
+        self.api_key = api_key
+        self.models: list[dict] = []
+        self.last_fetch: float = 0
+        self.cache_ttl: float = 300  # 5 minutes in-memory cache
+
+    @staticmethod
+    def format_model_metadata(model_id: str) -> tuple[str, str]:
+        """Convert model ID to display label & provider group without dropping any unknown model."""
+        if model_id.lower() == "auto":
+            return "Auto", "Let 9Router decide"
+
+        parts = model_id.split('/', 1)
+        prefix = parts[0] if len(parts) > 1 else ''
+        raw_name = parts[1] if len(parts) > 1 else parts[0]
+
+        # Determine clean group name
+        prefix_lower = prefix.lower()
+        if 'claude' in raw_name.lower():
+            group = "Anthropic / Claude"
+        elif 'gemini' in raw_name.lower():
+            group = "Google / Gemini"
+        elif any(k in raw_name.lower() for k in ('gpt', 'codex', 'o1', 'o3')):
+            group = "OpenAI / Codex"
+        elif 'deepseek' in raw_name.lower() or prefix_lower == 'ds':
+            group = "DeepSeek"
+        elif 'glm' in raw_name.lower():
+            group = "Zhipu / GLM"
+        elif prefix_lower == 'ag':
+            group = "Antigravity Gateway"
+        elif prefix_lower == 'cc':
+            group = "Claude Gateway"
+        elif prefix_lower == 'cx':
+            group = "Codex Gateway"
+        else:
+            group = prefix.upper() if prefix else "Available Models"
+
+        # Generate human-readable label
+        words = raw_name.replace('-', ' ').replace('_', ' ').split()
+        formatted_words = []
+        for w in words:
+            wl = w.lower()
+            if wl in ('gpt', 'glm', 'ai', 'oss', 'api', 'pro', 'r1', 'v3'):
+                formatted_words.append(w.upper())
+            elif '.' in w or (w.replace('.', '').isdigit()):
+                formatted_words.append(w)
+            else:
+                formatted_words.append(w.capitalize())
+
+        label = ' '.join(formatted_words)
+        return label, group
+
+    def fetch_models(self, force: bool = False) -> tuple[bool, str]:
+        """Fetch models dynamically from 9Router GET {ROUTER_BASE_URL}/models."""
+        now = time.time()
+        if self.models and not force and (now - self.last_fetch < self.cache_ttl):
+            return True, "cached"
+
+        url = f"{self.base_url}/models"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "User-Agent": "pips-cli/2.0",
+            "Accept": "application/json"
+        }
+        req = urllib.request.Request(url, headers=headers, method="GET")
+
+        try:
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                raw_list = data.get("data", [])
+                parsed = []
+                for item in raw_list:
+                    m_id = item.get("id")
+                    if m_id:
+                        lbl, grp = self.format_model_metadata(m_id)
+                        parsed.append({
+                            "id": m_id,
+                            "name": lbl,
+                            "group": grp,
+                            "raw": item
+                        })
+
+                if parsed:
+                    self.models = parsed
+                    self.last_fetch = now
+                    return True, f"Loaded {len(parsed)} models"
+                else:
+                    return False, "9Router returned an empty model list"
+        except urllib.error.HTTPError as e:
+            return False, f"HTTP {e.code}: {e.reason}"
+        except urllib.error.URLError as e:
+            return False, f"Unable to reach 9Router at {self.base_url}"
+        except Exception as e:
+            return False, str(e)
+
+
+# Initialize global model service
+model_service = ModelService(ROUTER_BASE_URL, API_KEY)
+current_model_id = DEFAULT_FALLBACK_MODEL
+
+
+# ──────────────────────────────────────────────
+# Error Display (Rule 11)
+# ──────────────────────────────────────────────
+def show_router_error(detail: str = ""):
+    console.print()
+    console.print(Panel(
+        Text.from_markup(
+            f"[bold yellow]⚠ Unable to connect to 9Router[/bold yellow]\n\n"
+            f"[dim]{ROUTER_BASE_URL}[/dim]\n\n"
+            f"{detail}\n\n"
+            f"[white]Check that 9Router is running and try again.[/white]"
+        ),
+        border_style="yellow",
+        box=box.ROUNDED,
+        padding=(1, 2)
+    ))
+    console.print()
+
+
+# ──────────────────────────────────────────────
+# Interactive Model Selector (Rule 3, 4, 5)
+# ──────────────────────────────────────────────
+def interactive_select_model(active_id: str, search_initial: str = "") -> str:
+    """Pure terminal keyboard-first interactive model selector with live search."""
+    ok, err = model_service.fetch_models()
+    if not ok and not model_service.models:
+        show_router_error(err)
+        return active_id
+
+    models = model_service.models
+    query = search_initial
+    selected_idx = 0
+
+    # Locate current index
+    for i, m in enumerate(models):
+        if m["id"] == active_id:
+            selected_idx = i
+            break
+
+    page_size = 7
+
+    while True:
+        # Filter models by search query
+        if query:
+            q_lower = query.lower()
+            filtered = [
+                m for m in models
+                if q_lower in m["id"].lower() or q_lower in m["name"].lower() or q_lower in m["group"].lower()
+            ]
+        else:
+            filtered = models
+
+        if not filtered:
+            selected_idx = 0
+        elif selected_idx >= len(filtered):
+            selected_idx = len(filtered) - 1
+        elif selected_idx < 0:
+            selected_idx = 0
+
+        # Calculate window for scroll
+        start_idx = max(0, min(selected_idx - page_size // 2, len(filtered) - page_size))
+        end_idx = min(start_idx + page_size, len(filtered))
+        visible_items = filtered[start_idx:end_idx]
+
+        # Render Selector Panel
+        lines = []
+        if query:
+            lines.append(f"  [bold]Search:[/bold] [cyan]{query}[/cyan][blink]_[/blink]\n")
+        else:
+            lines.append(f"  [dim]Type to search • Press / to filter[/dim]\n")
+
+        if not filtered:
+            lines.append("  [dim italic]No matching models found[/dim italic]\n")
+        else:
+            for idx_offset, m in enumerate(visible_items):
+                actual_idx = start_idx + idx_offset
+                is_selected = (actual_idx == selected_idx)
+                is_active = (m["id"] == active_id)
+
+                indicator = "[bold cyan]❯[/bold cyan]" if is_selected else " "
+                active_mark = "[bold green]● [/bold green]" if is_active else ""
+
+                if is_selected:
+                    lines.append(f"  {indicator} {active_mark}[bold white]{m['name']}[/bold white]  [dim]({m['group']})[/dim]")
+                    lines.append(f"      [cyan]{m['id']}[/cyan]")
+                else:
+                    lines.append(f"  {indicator} {active_mark}[dim]{m['name']}[/dim]  [dim]({m['group']})[/dim]")
+                    lines.append(f"      [dim]{m['id']}[/dim]")
+                lines.append("")
+
+        panel_content = Text.from_markup("\n".join(lines).rstrip())
+
+        console.clear()
+        console.print(Panel(
+            panel_content,
+            title="[bold cyan]SELECT MODEL[/bold cyan]",
+            title_align="left",
+            border_style="cyan",
+            box=box.ROUNDED,
+            padding=(1, 2)
+        ))
+        console.print("  [dim]↑↓ Navigate   Enter Select   / Search   Esc Back[/dim]")
+
+        # Handle Keypress
+        try:
+            key = read_single_key()
+        except KeyboardInterrupt:
+            return active_id
+
+        if key == 'UP':
+            if selected_idx > 0:
+                selected_idx -= 1
+        elif key == 'DOWN':
+            if selected_idx < len(filtered) - 1:
+                selected_idx += 1
+        elif key == 'ENTER':
+            if filtered:
+                chosen = filtered[selected_idx]["id"]
+                return chosen
+            return active_id
+        elif key == 'ESC':
+            return active_id
+        elif key == 'BACKSPACE':
+            if query:
+                query = query[:-1]
+                selected_idx = 0
+        elif key == '/':
+            # Keep query or prompt search
+            pass
+        elif len(key) == 1 and key.isprintable():
+            query += key
+            selected_idx = 0
+
+
+# ──────────────────────────────────────────────
+# Main Screen (Rule 6)
 # ──────────────────────────────────────────────
 PIPS_ASCII = """\
  ██████╗ ██╗██████╗ ███████╗
@@ -123,76 +397,94 @@ PIPS_ASCII = """\
  ██║     ██║██║     ███████║
  ╚═╝     ╚═╝╚═╝     ╚══════╝"""
 
+def show_main_screen() -> str:
+    """Render clean, minimal main menu without redundant model spam."""
+    menu_items = [
+        ("chat",     "Chat",     "Interactive AI chat"),
+        ("models",   "Models",   "Discover & switch AI model"),
+        ("agents",   "Agents",   "Autonomous VPS Agent mode"),
+        ("history",  "History",  "View conversation history"),
+        ("settings", "Settings", "View connection & endpoint info"),
+        ("exit",     "Exit",     "Quit PIPS CLI")
+    ]
+    selected_idx = 0
 
-def print_header(model_id: str, is_agent: bool = False):
-    model_name = model_id
-    model_desc = ""
-    for k, (mid, mname, mdesc) in MODELS.items():
-        if mid == model_id:
-            model_name = mname
-            model_desc = mdesc
-            break
+    while True:
+        ascii_lines = PIPS_ASCII.strip("\n").splitlines()
+        ascii_colored = "\n".join(f"  [bold cyan]{line}[/bold cyan]" for line in ascii_lines)
 
-    ascii_lines = PIPS_ASCII.strip("\n").splitlines()
-    ascii_text = "\n".join(f"[bold cyan]{line}[/bold cyan]" for line in ascii_lines)
+        lines = [
+            "",
+            ascii_colored,
+            "",
+            "  [dim]AI Development Companion                         v2.0.0[/dim]",
+            "",
+            "[dim]──────────────────────────────────────────────────────────────────────[/dim]",
+            "",
+            "  [bold white]What would you like to do?[/bold white]",
+            ""
+        ]
 
-    mode_label = "[bold magenta]🤖 AGENT MODE (VPS Control Active)[/bold magenta]" if is_agent else "[dim]Personal AI Infrastructure & Pipeline Server[/dim]"
+        for i, (key, label, desc) in enumerate(menu_items):
+            indicator = "[bold cyan]❯[/bold cyan]" if i == selected_idx else " "
+            if i == selected_idx:
+                lines.append(f"  {indicator} [bold white]{label}[/bold white]  [dim]— {desc}[/dim]")
+            else:
+                lines.append(f"  {indicator} [dim]{label}[/dim]")
 
-    cwd = os.getcwd()
-    console.print()
+        lines.append("")
+        content = Text.from_markup("\n".join(lines))
+
+        console.clear()
+        console.print(Panel(
+            content,
+            border_style="cyan",
+            box=box.ROUNDED,
+            padding=(0, 2)
+        ))
+        console.print("  [dim]↑↓ Navigate   Enter Select   Ctrl+C Exit[/dim]")
+
+        try:
+            key = read_single_key()
+        except KeyboardInterrupt:
+            return "exit"
+
+        if key == 'UP':
+            selected_idx = (selected_idx - 1) % len(menu_items)
+        elif key == 'DOWN':
+            selected_idx = (selected_idx + 1) % len(menu_items)
+        elif key == 'ENTER':
+            return menu_items[selected_idx][0]
+        elif key == 'ESC':
+            return "exit"
+
+
+# ──────────────────────────────────────────────
+# Chat Header (Rule 7)
+# ──────────────────────────────────────────────
+def print_chat_header(model_id: str, is_agent: bool = False):
+    """Prints a minimal, clean one-line header."""
+    label, _ = ModelService.format_model_metadata(model_id)
+    mode_text = " [bold magenta]• AGENT[/bold magenta]" if is_agent else ""
+
+    console.clear()
+    header_title = f" PIPS CLI{mode_text} ─── {label} "
     console.print(Panel(
-        Text.from_markup(
-            f"{ascii_text}\n\n"
-            f"{mode_label}\n\n"
-            f"[dim]Model   :[/dim] [bold green]{model_name}[/bold green]  [dim]{model_desc}[/dim]\n"
-            f"[dim]Model ID:[/dim] [blue]{model_id}[/blue]\n"
-            f"[dim]Workdir :[/dim] [yellow]{cwd}[/yellow]\n\n"
-            f"[dim]Type [/dim][bold]/help[/bold][dim] for commands  •  [/dim][bold]/agent[/bold][dim] to toggle agent  •  [/dim][bold]/exit[/bold][dim] to quit[/dim]"
-        ),
+        "",
+        title=f"[cyan]{header_title}[/cyan]",
+        title_align="center",
         border_style="cyan" if not is_agent else "magenta",
-        padding=(1, 2),
+        box=box.ROUNDED,
+        height=3
     ))
-    console.print()
 
 
 # ──────────────────────────────────────────────
-# Model selector
-# ──────────────────────────────────────────────
-def select_model(current_model: str = DEFAULT_MODEL_ID) -> str:
-    console.print(Panel(
-        "[bold cyan]Select Model[/bold cyan]",
-        border_style="cyan",
-        padding=(0, 1),
-    ))
-    console.print()
-
-    for k, (mid, mname, mdesc) in MODELS.items():
-        active = "●" if mid == current_model else " "
-        console.print(f"  [cyan]{k}[/cyan]  [green]{active}[/green]  [white]{mname}[/white]  [dim]{mdesc}[/dim]")
-
-    console.print()
-    console.print(f"  [dim]Press Enter for default ([/dim][green]{DEFAULT_MODEL_ID}[/green][dim])[/dim]")
-    console.print()
-
-    try:
-        choice = input("  Select [1-9]: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return current_model
-
-    if choice in MODELS:
-        selected_id = MODELS[choice][0]
-        console.print(f"\n  [green]✓[/green] Selected: [bold]{MODELS[choice][1]}[/bold]\n")
-        return selected_id
-
-    return current_model
-
-
-# ──────────────────────────────────────────────
-# Stream chat (Zero external deps, Robust SSE)
+# Stream Chat Response (Urllib / SSE)
 # ──────────────────────────────────────────────
 def stream_chat(messages: list, model_id: str):
     """Stream response from 9Router, yields tokens safely."""
-    url = f"{PIPS_BASE_URL}/chat/completions"
+    url = f"{ROUTER_BASE_URL}/chat/completions"
     headers = {
         "Content-Type":  "application/json",
         "Authorization": f"Bearer {API_KEY}",
@@ -229,14 +521,11 @@ def stream_chat(messages: list, model_id: str):
         body = e.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"HTTP {e.code}: {body}")
     except urllib.error.URLError as e:
-        raise RuntimeError(f"Connection error: {e.reason}")
+        raise RuntimeError(f"Connection error to 9Router: {e.reason}")
     except (socket.timeout, TimeoutError):
-        raise RuntimeError("Request timed out while waiting for AI response.")
+        raise RuntimeError("Request timed out waiting for AI response.")
 
 
-# ──────────────────────────────────────────────
-# Thinking indicator
-# ──────────────────────────────────────────────
 class ThinkingIndicator:
     def __init__(self):
         self._live = None
@@ -252,30 +541,17 @@ class ThinkingIndicator:
             self._live.stop()
 
 
-# ──────────────────────────────────────────────
-# Render response (No token loss, No double print)
-# ──────────────────────────────────────────────
 def render_response(model_id: str, messages: list) -> str:
-    """Show thinking spinner, then stream cleanly without duplicate panels."""
-    model_label = model_id
-    for k, (mid, mname, _) in MODELS.items():
-        if mid == model_id:
-            model_label = mname
-            break
-
-    console.print()
-    console.print(f"  [bold cyan]●[/bold cyan] [dim]{model_label}[/dim]\n")
-
+    """Stream tokens directly without repeating metadata panel."""
     try:
         gen = stream_chat(messages, model_id)
     except Exception as e:
-        console.print(f"  [red]✗ Error:[/red] {e}\n")
+        console.print(f"\n  [red]✗ Error:[/red] {e}\n")
         return ""
 
     full_text = []
-
-    # Wait for first token under spinner
     first_chunk = None
+
     with ThinkingIndicator():
         try:
             first_chunk = next(gen)
@@ -283,15 +559,14 @@ def render_response(model_id: str, messages: list) -> str:
         except StopIteration:
             pass
         except RuntimeError as e:
-            console.print(f"  [red]✗ Error:[/red] {e}\n")
+            console.print(f"\n  [red]✗ Error:[/red] {e}\n")
             return ""
 
-    # Print first token immediately
+    console.print()
     if first_chunk:
         console.print(first_chunk, end="", markup=False, highlight=False)
         sys.stdout.flush()
 
-    # Stream the rest of response
     try:
         for chunk in gen:
             full_text.append(chunk)
@@ -306,10 +581,10 @@ def render_response(model_id: str, messages: list) -> str:
 
 
 # ──────────────────────────────────────────────
-# Agent Client Integration (Local & Remote)
+# Agent Client Execution (Local & Remote)
 # ──────────────────────────────────────────────
-def run_agent_turn(prompt: str, is_local_vps: bool = False):
-    """Execute turn using Agent (either locally on current directory or via remote VPS Agent Server)."""
+def run_agent_turn(prompt: str):
+    """Execute turn using Agent (locally on current working directory or via remote daemon)."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
     local_agent_path = None
 
@@ -325,12 +600,12 @@ def run_agent_turn(prompt: str, is_local_vps: bool = False):
     if local_agent_path:
         import subprocess
         if local_agent_path.endswith(".py"):
-            proc = subprocess.run([sys.executable, local_agent_path, prompt], cwd=os.getcwd())
+            subprocess.run([sys.executable, local_agent_path, prompt], cwd=os.getcwd())
         else:
-            proc = subprocess.run([local_agent_path, prompt], cwd=os.getcwd())
+            subprocess.run([local_agent_path, prompt], cwd=os.getcwd())
         return
 
-    # Otherwise stream from remote Agent Server
+    # Fallback to Remote Agent Server
     url = f"{PIPS_AGENT_URL}/api/agent/chat"
     headers = {
         "Content-Type": "application/json",
@@ -371,67 +646,66 @@ def run_agent_turn(prompt: str, is_local_vps: bool = False):
                     except json.JSONDecodeError:
                         pass
     except Exception as e:
-        console.print(f"  [red]✗ Failed to connect to VPS Agent Server:[/red] {e}")
-        console.print(f"  [dim]Make sure 'pips-agent serve' is running on your VPS, or check PIPS_AGENT_URL[/dim]\n")
+        console.print(f"  [red]✗ Failed to connect to VPS Agent Server:[/red] {e}\n")
 
 
 # ──────────────────────────────────────────────
-# Slash commands
+# Slash Commands Handler (Rule 8, 9, 12)
 # ──────────────────────────────────────────────
 def handle_slash(cmd: str, model_id: str, messages: list, is_agent: bool) -> tuple[str, list, bool, bool]:
-    """Returns (model_id, messages, should_continue, is_agent)"""
+    """Handles slash commands. Returns (model_id, messages, should_continue, is_agent)."""
     parts = cmd.strip().split(maxsplit=1)
     command = parts[0].lower()
+    arg = parts[1].strip() if len(parts) > 1 else ""
 
     if command in ("/exit", "/quit", "/q"):
         console.print("\n  [dim]Goodbye.[/dim]\n")
         return model_id, messages, False, is_agent
 
-    elif command == "/help":
-        console.print(Panel(
-            Text.from_markup(
-                "[bold]PIPS CLI Commands[/bold]\n\n"
-                "  [cyan]/model[/cyan]         — switch AI model\n"
-                "  [cyan]/models[/cyan]        — list available models\n"
-                "  [cyan]/agent[/cyan]         — toggle Autonomous VPS Agent Mode\n"
-                "  [cyan]/clear[/cyan]         — clear chat history\n"
-                "  [cyan]/history[/cyan]       — show current conversation\n"
-                "  [cyan]/status[/cyan]        — check 9Router & VPS Agent status\n"
-                "  [cyan]/help[/cyan]          — show this help\n"
-                "  [cyan]/exit[/cyan]          — exit pips-cli\n\n"
-                "[dim]Tip: Use ↑↓ arrow keys to navigate history[/dim]"
-            ),
-            border_style="cyan",
-            padding=(0, 2),
-        ))
-        return model_id, messages, True, is_agent
+    elif command in ("/model", "/models"):
+        if arg == "--refresh":
+            model_service.fetch_models(force=True)
+            console.print("  [green]✓[/green] Model catalog refreshed.\n")
+            return model_id, messages, True, is_agent
+
+        if arg:
+            # Query-based search or direct match
+            model_service.fetch_models()
+            matched = [
+                m for m in model_service.models
+                if arg.lower() in m["id"].lower() or arg.lower() in m["name"].lower()
+            ]
+            if len(matched) == 1:
+                new_id = matched[0]["id"]
+                console.print(f"  [green]✓[/green] Model switched to [bold]{matched[0]['name']}[/bold] ([dim]{new_id}[/dim])\n")
+                return new_id, messages, True, is_agent
+            elif len(matched) > 1:
+                new_id = interactive_select_model(model_id, search_initial=arg)
+                name, _ = ModelService.format_model_metadata(new_id)
+                print_chat_header(new_id, is_agent)
+                console.print(f"  [green]✓[/green] Model switched to [bold]{name}[/bold]\n")
+                return new_id, messages, True, is_agent
+            else:
+                console.print(f"  [yellow]No model found matching:[/yellow] {arg}\n")
+                return model_id, messages, True, is_agent
+
+        # Open interactive selector
+        new_id = interactive_select_model(model_id)
+        name, _ = ModelService.format_model_metadata(new_id)
+        print_chat_header(new_id, is_agent)
+        console.print(f"  [green]✓[/green] Model switched to [bold]{name}[/bold]\n")
+        return new_id, messages, True, is_agent
 
     elif command == "/agent":
         is_agent = not is_agent
+        print_chat_header(model_id, is_agent)
         status = "[bold green]ENABLED[/bold green]" if is_agent else "[dim]DISABLED (Chat mode)[/dim]"
-        console.print(f"\n  [magenta]🤖 Agent Mode:[/magenta] {status}\n")
-        return model_id, messages, True, is_agent
-
-    elif command == "/model":
-        console.print()
-        new_model = select_model(model_id)
-        console.print(f"  [green]✓[/green] Model switched to [bold]{new_model}[/bold]\n")
-        return new_model, messages, True, is_agent
-
-    elif command == "/models":
-        console.print()
-        console.print("  [bold]Available Models:[/bold]\n")
-        for k, (mid, mname, mdesc) in MODELS.items():
-            active = "[green]●[/green]" if mid == model_id else " "
-            console.print(f"  {active} [cyan]{k}[/cyan]  [white]{mname}[/white]  [dim]{mdesc}[/dim]")
-            console.print(f"     [dim]{mid}[/dim]")
-        console.print()
+        console.print(f"  [magenta]🤖 Agent Mode:[/magenta] {status}\n")
         return model_id, messages, True, is_agent
 
     elif command == "/clear":
-        messages_only = [m for m in messages if m["role"] == "system"]
-        console.clear()
-        print_header(model_id, is_agent)
+        messages_only = [m for m in messages if m.get("role") == "system"]
+        print_chat_header(model_id, is_agent)
         console.print("  [dim]Chat history cleared.[/dim]\n")
         return model_id, messages_only, True, is_agent
 
@@ -442,47 +716,60 @@ def handle_slash(cmd: str, model_id: str, messages: list, is_agent: bool) -> tup
             console.print()
             for m in messages:
                 role = m.get("role")
-                if role == "system":
-                    continue
+                if role == "system": continue
                 content = m.get("content", "")
                 snippet = content[:150] + "..." if len(content) > 150 else content
                 if role == "user":
-                    console.print(f"  [bold cyan]You:[/bold cyan] {snippet}")
+                    console.print(f"  [bold cyan]You >[/bold cyan] {snippet}")
                 elif role == "assistant":
-                    console.print(f"  [bold green]AI:[/bold green]  {snippet}")
+                    console.print(f"  [bold green]AI  >[/bold green] {snippet}")
             console.print()
         return model_id, messages, True, is_agent
 
     elif command == "/status":
         console.print()
-        # Health check
         try:
-            health_url = PIPS_BASE_URL.replace("/v1", "") + "/api/health"
-            req = urllib.request.Request(health_url, headers={"Authorization": f"Bearer {API_KEY}"})
-            with urllib.request.urlopen(req, timeout=5) as r:
+            req = urllib.request.Request(f"{ROUTER_BASE_URL.replace('/v1', '')}/api/health", headers={"Authorization": f"Bearer {API_KEY}"})
+            with urllib.request.urlopen(req, timeout=4) as r:
                 data = json.loads(r.read())
-            if data.get("ok"):
-                console.print(f"  [green]✓[/green] 9Router Gateway: [bold green]ONLINE[/bold green]")
-            else:
-                console.print(f"  [yellow]⚠[/yellow] 9Router Gateway: [yellow]DEGRADED[/yellow]")
-        except Exception as e:
-            console.print(f"  [red]✗[/red] 9Router Gateway: [red]OFFLINE[/red] ({e})")
-
-        # VPS Agent Health check
-        try:
-            agent_req = urllib.request.Request(f"{PIPS_AGENT_URL}/health", headers={"Authorization": f"Bearer {API_KEY}"})
-            with urllib.request.urlopen(agent_req, timeout=3) as r:
-                adata = json.loads(r.read())
-            if adata.get("ok"):
-                console.print(f"  [green]✓[/green] VPS Agent Server: [bold green]ONLINE ({PIPS_AGENT_URL})[/bold green]")
-            else:
-                console.print(f"  [yellow]⚠[/yellow] VPS Agent Server: [yellow]DEGRADED[/yellow]")
+            online = data.get("ok", True)
+            status_text = "[bold green]ONLINE[/bold green]" if online else "[yellow]DEGRADED[/yellow]"
         except Exception:
-            console.print(f"  [dim]•[/dim] VPS Agent Server: [dim]NOT REACHABLE AT {PIPS_AGENT_URL}[/dim]")
+            status_text = "[red]OFFLINE[/red]"
 
-        model_name = next((v[1] for v in MODELS.values() if v[0] == model_id), model_id)
-        console.print(f"  [dim]Gateway URL : {PIPS_BASE_URL}[/dim]")
-        console.print(f"  [dim]Active Model: {model_name} ({model_id})[/dim]\n")
+        lbl, _ = ModelService.format_model_metadata(model_id)
+        console.print(Panel(
+            Text.from_markup(
+                f"[bold cyan]9Router AI Gateway[/bold cyan]: {status_text}\n"
+                f"[dim]Endpoint     :[/dim] {ROUTER_BASE_URL}\n"
+                f"[dim]Active Model :[/dim] [green]{lbl}[/green] ([dim]{model_id}[/dim])\n"
+                f"[dim]Cached Models:[/dim] {len(model_service.models)} models available"
+            ),
+            border_style="cyan",
+            box=box.ROUNDED,
+            padding=(0, 2)
+        ))
+        console.print()
+        return model_id, messages, True, is_agent
+
+    elif command == "/help":
+        console.print(Panel(
+            Text.from_markup(
+                "[bold]PIPS CLI Commands[/bold]\n\n"
+                "  [cyan]/model[/cyan]          — open interactive model selector\n"
+                "  [cyan]/model <name>[/cyan]   — search or switch model by name\n"
+                "  [cyan]/models[/cyan]         — open model selector\n"
+                "  [cyan]/agent[/cyan]          — toggle Autonomous VPS Agent Mode\n"
+                "  [cyan]/clear[/cyan]          — clear chat history\n"
+                "  [cyan]/history[/cyan]        — view session messages\n"
+                "  [cyan]/status[/cyan]         — check 9Router connectivity\n"
+                "  [cyan]/help[/cyan]           — show this help\n"
+                "  [cyan]/exit[/cyan]           — quit application"
+            ),
+            border_style="cyan",
+            box=box.ROUNDED,
+            padding=(0, 2)
+        ))
         return model_id, messages, True, is_agent
 
     else:
@@ -491,87 +778,14 @@ def handle_slash(cmd: str, model_id: str, messages: list, is_agent: bool) -> tup
 
 
 # ──────────────────────────────────────────────
-# Input prompt
+# Interactive Chat Session
 # ──────────────────────────────────────────────
-def get_input(is_agent: bool = False) -> str:
-    console.print(Rule(style="magenta" if is_agent else "dim"))
-    prompt_sym = "  [magenta]🤖 agent ❯[/magenta] " if is_agent else "  ❯ "
-    try:
-        text = input(Text.from_markup(prompt_sym).plain)
-    except (EOFError, KeyboardInterrupt):
-        return "/exit"
-    return text.strip()
+def run_chat_session(initial_model_id: str = None, start_agent: bool = False):
+    global current_model_id
+    model_id = initial_model_id or current_model_id
+    is_agent = start_agent
 
-
-# ──────────────────────────────────────────────
-# Main CLI Loop
-# ──────────────────────────────────────────────
-def main():
-    # ── Parse CLI Arguments ──
-    args = sys.argv[1:]
-    is_agent = False
-    model_id = DEFAULT_MODEL_ID
-    one_shot_prompt = None
-
-    if args:
-        first = args[0]
-        if first in ("-h", "--help"):
-            print("Usage: pips-cli [OPTIONS] [PROMPT]")
-            print("\nInteractive AI chat and Autonomous VPS Agent CLI.")
-            print("\nOptions:")
-            print("  --select                  Choose model before starting")
-            print("  agent, --agent            Launch directly in Autonomous VPS Agent mode")
-            print("  -h, --help                Show this help message and exit")
-            print("  <1-9>                     Select model number directly (e.g. 'pips-cli 4')")
-            print("  <model-id>                Use specific model (e.g. 'pips-cli ag/claude-sonnet-4-6')")
-            print("\nExamples:")
-            print("  pips-cli                  Start interactive chat with default model")
-            print("  pips-cli agent            Control your VPS with the autonomous agent")
-            print("  pips-cli 4                Start chat using Claude Sonnet 4.6")
-            print("  pips-cli 'what is docker' Run single query and print result")
-            sys.exit(0)
-        elif first in ("agent", "--agent", "-a"):
-            is_agent = True
-            if len(args) > 1:
-                one_shot_prompt = " ".join(args[1:])
-        elif first == "--select":
-            model_id = select_model()
-        elif first in MODELS:
-            model_id = MODELS[first][0]
-            if len(args) > 1:
-                one_shot_prompt = " ".join(args[1:])
-        elif first in [m[0] for m in MODELS.values()]:
-            model_id = first
-            if len(args) > 1:
-                one_shot_prompt = " ".join(args[1:])
-        else:
-            # One shot prompt
-            one_shot_prompt = " ".join(args)
-
-    if one_shot_prompt:
-        if is_agent:
-            run_agent_turn(one_shot_prompt)
-        else:
-            cwd = os.getcwd()
-            os_name = "Windows" if sys.platform == "win32" else ("macOS" if sys.platform == "darwin" else "Linux")
-            user_name = os.environ.get("USERNAME") or os.environ.get("USER") or "user"
-            msgs = [
-                {
-                    "role": "system",
-                    "content": (
-                        f"You are PIPS AI, a helpful coding and system assistant.\n"
-                        f"Active CWD: {cwd} on {os_name} (User: {user_name}).\n"
-                        f"When user refers to 'path ini', 'folder ini', 'disini', they mean {cwd}."
-                    )
-                },
-                {"role": "user", "content": one_shot_prompt}
-            ]
-            render_response(model_id, msgs)
-        sys.exit(0)
-
-    # Interactive mode
-    console.clear()
-    print_header(model_id, is_agent)
+    print_chat_header(model_id, is_agent)
 
     cwd = os.getcwd()
     os_name = "Windows" if sys.platform == "win32" else ("macOS" if sys.platform == "darwin" else "Linux")
@@ -581,28 +795,27 @@ def main():
         {
             "role": "system",
             "content": (
-                f"You are PIPS AI, a helpful coding and system assistant powered by PIPS personal AI infrastructure.\n"
+                f"You are PIPS AI, a helpful coding and system assistant powered by 9Router.\n"
                 f"Active environment:\n"
                 f"- Working Directory (CWD): {cwd}\n"
                 f"- Operating System: {os_name} ({sys.platform})\n"
                 f"- Current User: {user_name}\n\n"
                 f"Important:\n"
-                f"When the user refers to 'path ini', 'folder ini', 'disini', 'current directory', or relative paths, "
-                f"they are referring to: {cwd}.\n"
-                f"If the user asks to inspect, read, or trace files in this path while you are in Chat mode, tell them the path is {cwd}, "
-                f"and explain that they can switch to Agent Mode using '/agent' or 'pips-cli agent' so you can run tools and list/read files automatically.\n"
-                f"Be concise, precise, and helpful."
+                f"When the user refers to 'path ini', 'folder ini', 'disini', or relative paths, they mean: {cwd}.\n"
+                f"Be concise, precise, and helpful. Use proper code formatting matching {os_name}."
             )
         }
     ]
 
     while True:
+        prompt_sym = "🤖 agent > " if is_agent else "You > "
         try:
-            user_input = get_input(is_agent)
-        except KeyboardInterrupt:
-            console.print("\n  [dim]Use /exit to quit.[/dim]\n")
-            continue
+            user_input = input(prompt_sym)
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n  [dim]Exiting chat session.[/dim]\n")
+            break
 
+        user_input = user_input.strip()
         if not user_input:
             continue
 
@@ -611,6 +824,7 @@ def main():
         # Handle slash commands
         if user_input.startswith("/"):
             model_id, messages, cont, is_agent = handle_slash(user_input, model_id, messages, is_agent)
+            current_model_id = model_id
             if not cont:
                 break
             continue
@@ -619,11 +833,6 @@ def main():
             run_agent_turn(user_input)
             continue
 
-        # Regular Chat Mode
-        console.print()
-        console.print(f"  [bold white]You[/bold white]")
-        console.print(f"  {user_input}")
-
         messages.append({"role": "user", "content": user_input})
         response = render_response(model_id, messages)
 
@@ -631,7 +840,125 @@ def main():
             messages.append({"role": "assistant", "content": response})
 
     save_history()
-    console.print()
+
+
+# ──────────────────────────────────────────────
+# Main CLI Entry Point
+# ──────────────────────────────────────────────
+def main():
+    global current_model_id
+
+    # Warm-up / cache models from 9Router in background or startup
+    model_service.fetch_models()
+    if model_service.models:
+        current_model_id = model_service.models[0]["id"]
+        # Prefer gemini-3.8-flash if present
+        for m in model_service.models:
+            if "gemini-3.8-flash" in m["id"] and "low" not in m["id"] and "high" not in m["id"]:
+                current_model_id = m["id"]
+                break
+
+    args = sys.argv[1:]
+
+    # One-shot command line handling
+    if args:
+        first = args[0]
+        if first in ("-h", "--help"):
+            print("Usage: pips-cli [OPTIONS] [PROMPT]")
+            print("\nPIPS CLI — AI Development Companion powered by 9Router.")
+            print("\nOptions:")
+            print("  chat                      Open interactive chat directly")
+            print("  agent, --agent            Launch directly in Autonomous VPS Agent mode")
+            print("  models, --models          Open interactive model selector")
+            print("  -h, --help                Show this help message and exit")
+            print("\nExamples:")
+            print("  pips-cli                  Open main menu")
+            print("  pips-cli chat             Start chat immediately")
+            print("  pips-cli agent            Run autonomous agent")
+            print("  pips-cli 'what is docker' Run single query and print result")
+            sys.exit(0)
+        elif first in ("chat", "--chat"):
+            run_chat_session(current_model_id)
+            sys.exit(0)
+        elif first in ("agent", "--agent", "-a"):
+            prompt = " ".join(args[1:]) if len(args) > 1 else None
+            if prompt:
+                run_agent_turn(prompt)
+            else:
+                run_chat_session(current_model_id, start_agent=True)
+            sys.exit(0)
+        elif first in ("models", "--models", "--select"):
+            chosen = interactive_select_model(current_model_id)
+            current_model_id = chosen
+            name, _ = ModelService.format_model_metadata(chosen)
+            console.print(f"\n  [green]✓[/green] Active model set to: [bold]{name}[/bold] ([dim]{chosen}[/dim])\n")
+            sys.exit(0)
+        else:
+            # One-shot query mode
+            one_shot_prompt = " ".join(args)
+            cwd = os.getcwd()
+            os_name = "Windows" if sys.platform == "win32" else "Linux"
+            msgs = [
+                {
+                    "role": "system",
+                    "content": f"You are PIPS AI. Active CWD: {cwd} on {os_name}."
+                },
+                {"role": "user", "content": one_shot_prompt}
+            ]
+            render_response(current_model_id, msgs)
+            sys.exit(0)
+
+    # If stdin is not a TTY (pipe mode), directly open chat
+    if not sys.stdin.isatty():
+        run_chat_session(current_model_id)
+        sys.exit(0)
+
+    # Interactive Main Menu Loop (Rule 6)
+    while True:
+        action = show_main_screen()
+
+        if action == "chat":
+            run_chat_session(current_model_id)
+        elif action == "models":
+            chosen = interactive_select_model(current_model_id)
+            current_model_id = chosen
+            name, _ = ModelService.format_model_metadata(chosen)
+            console.print(f"\n  [green]✓[/green] Selected: [bold]{name}[/bold]")
+            time.sleep(0.8)
+        elif action == "agents":
+            run_chat_session(current_model_id, start_agent=True)
+        elif action == "history":
+            console.clear()
+            console.print(Panel("[bold]Recent Input History[/bold]", border_style="cyan"))
+            if os.path.exists(HISTORY_FILE):
+                with open(HISTORY_FILE, "r", encoding="utf-8", errors="replace") as f:
+                    hist_lines = [l.strip() for l in f.readlines() if l.strip()][-15:]
+                for h in hist_lines:
+                    console.print(f"  [dim]•[/dim] {h}")
+            else:
+                console.print("  [dim]No history file yet.[/dim]")
+            console.print("\n[dim]Press Enter to return to main menu...[/dim]")
+            read_single_key()
+        elif action == "settings":
+            console.clear()
+            console.print(Panel(
+                Text.from_markup(
+                    f"[bold]PIPS CLI Configuration[/bold]\n\n"
+                    f"[dim]9Router Gateway :[/dim] [cyan]{ROUTER_BASE_URL}[/cyan]\n"
+                    f"[dim]Agent Service   :[/dim] [cyan]{PIPS_AGENT_URL}[/cyan]\n"
+                    f"[dim]Active Model    :[/dim] [green]{current_model_id}[/green]\n"
+                    f"[dim]API Key         :[/dim] {API_KEY[:8]}...{API_KEY[-4:] if len(API_KEY)>12 else ''}\n"
+                    f"[dim]Working Dir     :[/dim] [yellow]{os.getcwd()}[/yellow]"
+                ),
+                border_style="cyan",
+                box=box.ROUNDED,
+                padding=(1, 2)
+            ))
+            console.print("[dim]Press Enter to return to main menu...[/dim]")
+            read_single_key()
+        elif action == "exit":
+            console.print("\n[dim]Goodbye![/dim]\n")
+            break
 
 
 if __name__ == "__main__":
