@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # ============================================================
-# pips-cli installer — Linux / macOS / WSL
+# pips-cli & agent installer — Linux / macOS / WSL
+# Fully automated zero-friction setup:
+#   Auto-installs Python 3 if missing
+#   Auto-installs rich
+#   Auto-configures PATH
+#   Auto-launches pips-cli immediately!
 #
 # One-liner:
 #   curl -fsSL https://pips.dvikara.cloud/install.sh | bash
-#
-# Windows: use install.ps1 instead
 # ============================================================
 set -e
 
@@ -31,7 +34,8 @@ cat << 'BANNER'
   ██║     ██║██║     ███████║
   ╚═╝     ╚═╝╚═╝     ╚══════╝
 BANNER
-echo -e "${NC}${BOLD}  Personal AI Infrastructure & Pipeline Server${NC}"
+echo -e "${NC}${BOLD}  Personal AI Infrastructure & Autonomous VPS Agent${NC}"
+echo -e "${CYAN}  One-Click Auto Installer${NC}"
 echo ""
 
 # ── Detect OS ────────────────────────────────────────────────
@@ -44,18 +48,13 @@ fi
 info "Detected: $OS"
 
 # ── Detect install dir ───────────────────────────────────────
-if [[ "$OS" == "macos" ]]; then
-    # macOS: prefer /usr/local/bin if writable, else ~/.local/bin
-    if [[ -w "/usr/local/bin" ]]; then
-        INSTALL_DIR="/usr/local/bin"
-    else
-        INSTALL_DIR="$HOME/.local/bin"
-    fi
+if [[ "$OS" == "macos" ]] && [[ -w "/usr/local/bin" ]]; then
+    INSTALL_DIR="/usr/local/bin"
 else
     INSTALL_DIR="$HOME/.local/bin"
 fi
 
-# ── Python 3 ────────────────────────────────────────────────
+# ── Python 3 Detection & Auto-Install ────────────────────────
 info "Checking Python 3..."
 PYTHON=""
 for cmd in python3 python; do
@@ -69,18 +68,36 @@ for cmd in python3 python; do
 done
 
 if [[ -z "$PYTHON" ]]; then
+    warn "Python 3 not found. Attempting automatic installation..."
+    if command -v apt-get &>/dev/null; then
+        sudo apt-get update -qq && sudo apt-get install -y python3 python3-pip python3-venv 2>/dev/null || true
+    elif command -v brew &>/dev/null; then
+        brew install python3 || true
+    elif command -v dnf &>/dev/null; then
+        sudo dnf install -y python3 python3-pip 2>/dev/null || true
+    elif command -v pacman &>/dev/null; then
+        sudo pacman -Sy --noconfirm python python-pip 2>/dev/null || true
+    fi
+
+    for cmd in python3 python; do
+        if command -v "$cmd" &>/dev/null && "$cmd" --version 2>&1 | grep -q "Python 3"; then
+            PYTHON="$cmd"
+            break
+        fi
+    done
+fi
+
+if [[ -z "$PYTHON" ]]; then
     echo ""
     if [[ "$OS" == "macos" ]]; then
-        err "Python 3 not found. Install: brew install python3"
-    elif [[ "$OS" == "wsl" ]]; then
-        err "Python 3 not found. Install: sudo apt install python3 python3-pip"
+        err "Python 3 not found. Install manually: brew install python3"
     else
-        err "Python 3 not found. Install: sudo apt install python3 python3-pip"
+        err "Python 3 not found. Install manually: sudo apt install python3 python3-pip"
     fi
 fi
 success "$($PYTHON --version)"
 
-# ── pip ──────────────────────────────────────────────────────
+# ── pip Detection ───────────────────────────────────────────
 PIP=""
 for cmd in pip3 pip; do
     if command -v "$cmd" &>/dev/null; then
@@ -90,15 +107,16 @@ for cmd in pip3 pip; do
 done
 
 if [[ -z "$PIP" ]]; then
-    # try python -m pip
     if $PYTHON -m pip --version &>/dev/null 2>&1; then
         PIP="$PYTHON -m pip"
     else
-        err "pip not found. Install: sudo apt install python3-pip"
+        warn "pip not found, trying to bootstrap pip..."
+        $PYTHON -m ensurepip --default-pip 2>/dev/null || true
+        PIP="$PYTHON -m pip"
     fi
 fi
 
-# ── rich ────────────────────────────────────────────────────
+# ── rich library ────────────────────────────────────────────
 info "Checking 'rich' library..."
 if $PYTHON -c "import rich" 2>/dev/null; then
     success "rich already installed"
@@ -106,6 +124,7 @@ else
     info "Installing rich..."
     $PIP install --user --quiet rich 2>/dev/null || \
     $PIP install --quiet rich 2>/dev/null || \
+    $PIP install --break-system-packages --user --quiet rich 2>/dev/null || \
     err "Failed to install rich. Run: pip3 install rich"
     success "rich installed"
 fi
@@ -113,19 +132,19 @@ fi
 # ── Create install dir ──────────────────────────────────────
 mkdir -p "$INSTALL_DIR"
 
-# ── Download ─────────────────────────────────────────────────
-info "Downloading pips-cli..."
+# ── Download pips-cli & pips-agent ───────────────────────────
+info "Downloading pips-cli & pips-agent..."
 TMP=$(mktemp)
+TMP_AGENT=$(mktemp)
+
 if command -v curl &>/dev/null; then
     curl -fsSL "$REPO_RAW/pips-cli.py" -o "$TMP" || err "Download failed. Check internet connection."
+    curl -fsSL "$REPO_RAW/pips-agent.py" -o "$TMP_AGENT" 2>/dev/null || true
 elif command -v wget &>/dev/null; then
     wget -q "$REPO_RAW/pips-cli.py" -O "$TMP" || err "Download failed."
+    wget -q "$REPO_RAW/pips-agent.py" -O "$TMP_AGENT" 2>/dev/null || true
 else
-    if [[ "$OS" == "macos" ]]; then
-        err "curl not found. Install Xcode Command Line Tools: xcode-select --install"
-    else
-        err "curl or wget required. Install: sudo apt install curl"
-    fi
+    err "curl or wget required."
 fi
 
 head -1 "$TMP" | grep -q "python" || err "Downloaded file is invalid. Try again."
@@ -134,13 +153,18 @@ rm -f "$TMP"
 chmod +x "$INSTALL_DIR/$SCRIPT_NAME"
 success "Installed → $INSTALL_DIR/$SCRIPT_NAME"
 
-# ── PATH ─────────────────────────────────────────────────────
-# Detect shell rc file
+if [[ -s "$TMP_AGENT" ]] && head -1 "$TMP_AGENT" | grep -q "python"; then
+    cp "$TMP_AGENT" "$INSTALL_DIR/pips-agent"
+    chmod +x "$INSTALL_DIR/pips-agent"
+    success "Installed → $INSTALL_DIR/pips-agent"
+fi
+rm -f "$TMP_AGENT"
+
+# ── PATH Configuration ──────────────────────────────────────
 if [[ -n "$ZSH_VERSION" ]] || [[ "$SHELL" == */zsh ]]; then
     SHELL_RC="$HOME/.zshrc"
 elif [[ -n "$BASH_VERSION" ]] || [[ "$SHELL" == */bash ]]; then
     if [[ "$OS" == "macos" ]]; then
-        # macOS bash uses .bash_profile
         SHELL_RC="$HOME/.bash_profile"
         [[ -f "$HOME/.bashrc" ]] && SHELL_RC="$HOME/.bashrc"
     else
@@ -160,55 +184,19 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
     export PATH="$INSTALL_DIR:$PATH"
 fi
 
-# ── macOS: also check /usr/local/bin in PATH ────────────────
-if [[ "$OS" == "macos" ]] && [[ "$INSTALL_DIR" == "/usr/local/bin" ]]; then
-    # /usr/local/bin should already be in PATH on macOS
-    true
-fi
-
-# ── API key ──────────────────────────────────────────────────
+# ── Launch pips-cli immediately! ────────────────────────────
 echo ""
-echo -e "  ${BOLD}API Key Setup${NC}"
 echo "  ─────────────────────────────────────────"
+echo -e "  ${GREEN}${BOLD}Installation complete! Launching pips-cli...${NC}"
+echo "  ─────────────────────────────────────────"
+echo ""
+sleep 1
 
-if [[ -n "$PIPS_API_KEY" ]]; then
-    success "PIPS_API_KEY already set"
+# If run through pipe (curl ... | bash), restore stdin to terminal for interaction
+if [[ -e /dev/tty ]]; then
+    exec < /dev/tty
+    "$INSTALL_DIR/$SCRIPT_NAME" "$@"
 else
-    echo -e "  Enter your PIPS API key ${CYAN}(press Enter to skip)${NC}:"
-    read -r -s -p "  API Key: " USER_KEY
-    echo ""
-    if [[ -n "$USER_KEY" ]]; then
-        # Remove old key if exists
-        grep -v "PIPS_API_KEY" "$SHELL_RC" > /tmp/.pips_rc_tmp 2>/dev/null \
-            && mv /tmp/.pips_rc_tmp "$SHELL_RC" || true
-        { echo ""; echo "# PIPS CLI"; echo "export PIPS_API_KEY=\"$USER_KEY\""; } >> "$SHELL_RC"
-        export PIPS_API_KEY="$USER_KEY"
-        success "API key saved to $SHELL_RC"
-    else
-        warn "Skipped. Set later:"
-        echo -e "    ${CYAN}export PIPS_API_KEY=\"your-key\"${NC}"
-    fi
+    echo -e "  ${BOLD}Start chatting:${NC} ${CYAN}pips-cli${NC}"
+    echo -e "  ${BOLD}Control VPS   :${NC} ${CYAN}pips-cli agent${NC}"
 fi
-
-# ── Done ─────────────────────────────────────────────────────
-echo ""
-echo "  ─────────────────────────────────────────"
-echo -e "  ${GREEN}${BOLD}Installation complete!${NC}"
-echo ""
-
-NEED_RELOAD=false
-if ! command -v pips-cli &>/dev/null 2>&1; then
-    NEED_RELOAD=true
-fi
-
-if $NEED_RELOAD; then
-    echo -e "  ${BOLD}Reload your shell first:${NC}"
-    echo -e "    ${CYAN}source $SHELL_RC${NC}"
-    echo ""
-fi
-
-echo -e "  ${BOLD}Start chatting:${NC}"
-echo -e "    ${CYAN}pips-cli${NC}              # default model"
-echo -e "    ${CYAN}pips-cli --select${NC}     # choose model"
-echo -e "    ${CYAN}pips-cli --help${NC}       # all options"
-echo ""

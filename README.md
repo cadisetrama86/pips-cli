@@ -1,4 +1,4 @@
-# PIPS CLI
+# PIPS CLI & Autonomous VPS Agent
 
 ```
  ██████╗ ██╗██████╗ ███████╗
@@ -9,115 +9,118 @@
  ╚═╝     ╚═╝╚═╝     ╚══════╝
 ```
 
-**Personal AI Infrastructure & Pipeline Server**
+**Personal AI Infrastructure & Autonomous VPS Agent Engine**
 
 GAS CAK NDANG DIGAWE OJOK NYOCOT AE
 
 ---
 
-## Cara Install
+## Fitur Utama
 
-### 🐧 Linux
+- 🚀 **1-Command Zero-Friction Setup**: Cukup jalankan satu perintah di terminal — sistem otomatis memasang Python (jika belum ada), memasang library yang dibutuhkan, mengatur PATH, dan **langsung membuka `pips-cli` detik itu juga**.
+- 🤖 **Autonomous VPS Agent**: Agen AI otonom yang beroperasi langsung di VPS untuk mengeksekusi shell command (`bash_run`), memantau dan me-restart container Docker (`docker_action`), membaca serta mengedit file (`file_read`, `file_write`, `file_edit`), dan memeriksa kesehatan server (`vps_status`).
+- ⚡ **Interactive Chat TUI Bebas Glitch**: Chat token-by-token yang mulus dengan model canggih (Gemini 3.8 Flash, Claude Sonnet 4.6, Claude Opus Thinking, Gemini Pro Agent) tanpa token terpotong dan tanpa double render.
+- 🌐 **Web Mission Control Dashboard**: Antarmuka web responsif bertema dark cyber di VPS yang dapat diakses langsung dari browser komputer atau ponsel tanpa setup tambahan.
+- 🪟 **True Cross-Platform**: Kompatibel penuh dan stabil di Windows (PowerShell/CMD/WSL), Linux, dan macOS.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/install.sh | bash
-source ~/.bashrc
-pips-cli
-```
+---
 
-### 🍎 macOS
+## Cara Install di Komputer Anda (1 Perintah Saja)
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/install.sh | bash
-source ~/.zshrc
-pips-cli
-```
-
-> Belum ada Python? Install dulu: `brew install python3`
-
-### 🪟 Windows — PowerShell
-
+### 🪟 Windows (PowerShell)
+Buka PowerShell, jalankan:
 ```powershell
-# Izinkan script (sekali saja)
-Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
-
-# Install
-iwr -useb https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/install.ps1 | iex
+iwr -useb https://pips.dvikara.cloud/install.ps1 | iex
 ```
+> **Catatan:** Jika belum ada Python di Windows Anda, installer akan otomatis mengunduh dan memasangnya di background secara senyap (*silent*). Begitu selesai, `pips-cli` langsung terbuka otomatis!
 
-Setelah selesai, **restart terminal** lalu jalankan `pips-cli`.
-
-> Belum ada Python? Download di https://www.python.org/downloads/  
-> Saat install, centang **"Add Python to PATH"**.
-
-### 🪟 Windows — WSL
-
+### 🐧 Linux & 🍎 macOS (Terminal)
+Buka terminal, jalankan:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/install.sh | bash
-source ~/.bashrc
-pips-cli
+curl -fsSL https://pips.dvikara.cloud/install.sh | bash
 ```
-
-### Requirements
-
-- Python 3.8+
-- Library `rich` — diinstall otomatis oleh installer
+> Otomatis memasang dependency dan langsung masuk ke sesi interaktif `pips-cli`.
 
 ---
 
 ## Cara Pakai
 
-### Mulai chat
-
+### 1. Mode Autonomous VPS Agent (Kendalikan VPS Anda)
+Jalankan tugas atau inspeksi VPS langsung dari terminal komputer Anda:
 ```bash
+# Masuk ke sesi interaktif Agen
+pips-cli agent
+
+# Atau berikan instruksi tugas langsung (one-shot)
+pips-cli agent "cek status disk dan container docker pemtan di VPS"
+pips-cli agent "baca 50 baris terakhir log container pemtan-api"
+pips-cli agent "cek pemakaian CPU dan RAM saat ini"
+```
+> Di dalam sesi chat biasa, Anda juga bisa mengetik `/agent` untuk berpindah ke mode agen kapan saja!
+
+### 2. Mode Chat AI Reguler
+```bash
+# Mulai chat langsung (Default: Gemini 3.8 Flash)
 pips-cli
-```
 
-Langsung masuk ke chat dengan model default (Gemini 3.8 Flash).
-
-### Pilih model di awal
-
-```bash
+# Pilih model interaktif di awal
 pips-cli --select
+
+# Langsung pilih model berdasarkan nomor (1-9)
+pips-cli 4        # Claude Sonnet 4.6
+pips-cli 5        # Claude Opus Thinking
+pips-cli 6        # Gemini Pro Agent
+
+# Pertanyaan sekali jalan (one-shot query)
+pips-cli "jelaskan perbedaan docker run dan docker compose singkat"
 ```
 
-Menampilkan daftar model untuk dipilih sebelum mulai chat.
-
-### Langsung set model tertentu
-
-```bash
-pips-cli ag/claude-sonnet-4-6
+### 3. Web Mission Control Dashboard
+Buka browser di komputer Anda dan buka alamat:
 ```
-
-### Contoh sesi chat
-
+http://<IP-VPS-ANDA>:20130/
 ```
-❯ jelaskan apa itu REST API
-❯ buatkan contoh kode Python untuk membuat REST API
-❯ /model          ← ganti model
-❯ /clear          ← hapus riwayat
-❯ /exit           ← keluar
-```
+*(Atau via Tailscale IP `http://100.90.156.126:20130/` atau `https://pips.dvikara.cloud/agent` jika Nginx sudah di-reload)*
+
+Fitur Dashboard:
+- Status VPS live (Gauges CPU %, RAM %, Disk %, dan daftar Docker aktif).
+- Panel chat real-time dengan kartu visual eksekusi tool (*tool execution card*).
+- Desain modern, dark mode, dan ringan.
 
 ---
 
-## Perintah dalam Chat
+## Perintah dalam Chat (Slash Commands)
 
 | Perintah | Fungsi |
 |----------|--------|
-| `/model` | Ganti model AI (tampil selector) |
-| `/models` | Lihat semua model + ID-nya |
-| `/clear` | Hapus riwayat chat, mulai baru |
-| `/history` | Tampilkan percakapan saat ini |
-| `/status` | Cek status koneksi ke gateway |
-| `/help` | Tampilkan semua perintah |
-| `/exit` | Keluar dari pips-cli |
-
-> Tips: gunakan tombol ↑↓ untuk navigasi riwayat input.
+| `/agent` | Toggle mode Autonomous VPS Agent (aktif / nonaktif) |
+| `/model` | Ganti model AI (menampilkan selector) |
+| `/models` | Lihat semua model + ID lengkapnya |
+| `/clear` | Hapus riwayat chat, mulai sesi baru |
+| `/history` | Tampilkan riwayat percakapan saat ini |
+| `/status` | Cek status gateway 9Router dan server agen VPS |
+| `/help` | Tampilkan panduan semua perintah |
+| `/exit` | Keluar dari aplikasi |
 
 ---
 
-## Daftar Model
+## Menjalankan Agen Server 24/7 di VPS (Systemd)
+
+Untuk memastikan server agen dan Web Dashboard di VPS selalu aktif melayani request dari komputer Anda:
+
+```bash
+# Di server VPS (folder pips-cli):
+sudo bash setup-agent-service.sh
+```
+
+Perintah ini akan:
+1. Mendaftarkan unit systemd `pips-agent.service` (port `20130`).
+2. Mengaktifkan autostart saat server reboot.
+3. Memperbarui reverse proxy Nginx untuk routing `/agent` dan `/api/agent`.
+
+---
+
+## Daftar Model AI
 
 | # | Model ID | Nama | Keterangan |
 |---|----------|------|-----------|
@@ -131,86 +134,16 @@ pips-cli ag/claude-sonnet-4-6
 | 8 | `ag/gemini-3-flash` | Gemini 3 Flash | Tugas Ringan 🌀 |
 | 9 | `ag/gemini-3-flash-agent` | Gemini 3 Flash Agent | Agent Ringan |
 
-Gunakan `/model` di dalam chat untuk ganti model kapan saja.
-
----
-
-## Konfigurasi
-
-Tidak perlu setup — API key dan gateway URL sudah terisi otomatis.
-
-Kalau ingin override (opsional):
-
-```bash
-# Linux / macOS
-export PIPS_BASE_URL="https://pips.dvikara.cloud/v1"
-export PIPS_API_KEY="your-api-key"
-```
-
-```powershell
-# Windows PowerShell
-$env:PIPS_BASE_URL = "https://pips.dvikara.cloud/v1"
-$env:PIPS_API_KEY = "your-api-key"
-```
-
-Atau buat file `~/.pips/pips.env`:
-
-```env
-PIPS_BASE_URL=https://pips.dvikara.cloud/v1
-PIPS_API_KEY=your-api-key
-```
-
----
-
-## Update
-
-Jalankan ulang installer sesuai OS:
-
-```bash
-# Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/install.sh | bash
-```
-
-```powershell
-# Windows
-iwr -useb https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/install.ps1 | iex
-```
-
----
-
-## Uninstall
-
-```bash
-# Linux / macOS
-rm ~/.local/bin/pips-cli
-```
-
-```powershell
-# Windows
-Remove-Item "$env:USERPROFILE\.local\bin\pips-cli.py"
-Remove-Item "$env:USERPROFILE\.local\bin\pips-cli.cmd"
-```
-
 ---
 
 ## Troubleshooting
 
-**`pips-cli: command not found`**
-```bash
-source ~/.bashrc    # Linux
-source ~/.zshrc     # macOS
-```
-
-**`ModuleNotFoundError: No module named 'rich'`**
-```bash
-pip3 install rich
-```
-
-**Connection error / tidak bisa konek**
-```bash
-# Cek status gateway
-pips-cli   # lalu ketik /status
-```
+- **Windows `ModuleNotFoundError: No module named 'readline'`**:
+  Telah diperbaiki dengan mekanisme *safe fallback* — tidak akan crash di Windows.
+- **Teks streaming terpotong atau tercetak dobel**:
+  Telah diperbaiki — streaming token-by-token langsung dicetak tanpa duplikasi panel Markdown.
+- **Akses port agent dari luar**:
+  Bisa diakses langsung lewat IP publik VPS port `20130`, Tailscale (`100.90.156.126:20130`), atau via Cloudflare/Nginx di `https://pips.dvikara.cloud/agent`.
 
 ---
 

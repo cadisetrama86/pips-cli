@@ -1,19 +1,31 @@
 #!/usr/bin/env python3
 """
-pips-cli — Interactive AI Chat TUI
-Connects to PIPS / 9Router AI Gateway
+pips-cli — Interactive AI Chat & Agent TUI
+Connects to PIPS / 9Router AI Gateway & PIPS Autonomous VPS Agent
 Inspired by kiro-cli style interface
+Cross-platform: Linux, macOS, Windows (PowerShell/CMD/WSL)
 """
 
 import os
 import sys
 import json
 import time
-import readline
-import threading
+import socket
 import urllib.request
 import urllib.error
+import urllib.parse
 from datetime import datetime
+
+# ──────────────────────────────────────────────
+# Safe readline import (Windows compatibility)
+# ──────────────────────────────────────────────
+try:
+    import readline
+except ImportError:
+    try:
+        import pyreadline3 as readline
+    except ImportError:
+        readline = None
 
 # ──────────────────────────────────────────────
 # Rich imports
@@ -30,14 +42,31 @@ from rich.columns import Columns
 from rich import box
 
 # ──────────────────────────────────────────────
+# Load Environment (~/.pips/pips.env)
+# ──────────────────────────────────────────────
+def load_env():
+    pips_env = os.path.expanduser("~/.pips/pips.env")
+    if os.path.exists(pips_env):
+        with open(pips_env, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    clean_val = v.strip().strip("'\"")
+                    os.environ.setdefault(k.strip(), clean_val)
+
+load_env()
+
+# ──────────────────────────────────────────────
 # Config
 # ──────────────────────────────────────────────
-PIPS_BASE_URL  = os.environ.get("PIPS_BASE_URL",  "https://pips.dvikara.cloud/v1")
-PIPS_API_KEY   = os.environ.get("PIPS_API_KEY",   "sk-ffcd49f104f5ca66-hs6zum-6bae8b1c")
+DEFAULT_GATEWAY = "https://pips.dvikara.cloud/v1"
+PIPS_BASE_URL  = os.environ.get("PIPS_BASE_URL", DEFAULT_GATEWAY).rstrip("/")
+PIPS_API_KEY   = os.environ.get("PIPS_API_KEY", "sk-ffcd49f104f5ca66-hs6zum-6bae8b1c")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", PIPS_API_KEY)
-
-# Use whichever key is set
 API_KEY = PIPS_API_KEY or OPENAI_API_KEY or ""
+
+PIPS_AGENT_URL = os.environ.get("PIPS_AGENT_URL", "http://127.0.0.1:20130").rstrip("/")
 
 # ──────────────────────────────────────────────
 # Model catalog (dari 9Router)
@@ -59,26 +88,31 @@ DEFAULT_MODEL_ID = "ag/gemini-3.8-flash"
 console = Console()
 
 # ──────────────────────────────────────────────
-# Readline history setup
+# Readline history setup (Safe for Windows)
 # ──────────────────────────────────────────────
 HISTORY_FILE = os.path.expanduser("~/.pips/cli/.chat_history")
-os.makedirs(os.path.dirname(HISTORY_FILE), exist_ok=True)
-try:
-    readline.read_history_file(HISTORY_FILE)
-except FileNotFoundError:
-    pass
-readline.set_history_length(500)
-
-
-def save_history():
+if readline:
     try:
-        readline.write_history_file(HISTORY_FILE)
+        os.makedirs(os.path.dirname(HISTORY_FILE), exist_ok=True)
+        try:
+            readline.read_history_file(HISTORY_FILE)
+        except (FileNotFoundError, OSError):
+            pass
+        readline.set_history_length(500)
     except Exception:
         pass
 
 
+def save_history():
+    if readline:
+        try:
+            readline.write_history_file(HISTORY_FILE)
+        except Exception:
+            pass
+
+
 # ──────────────────────────────────────────────
-# Header
+# Header & ASCII Art
 # ──────────────────────────────────────────────
 PIPS_ASCII = """\
  ██████╗ ██╗██████╗ ███████╗
@@ -89,7 +123,7 @@ PIPS_ASCII = """\
  ╚═╝     ╚═╝╚═╝     ╚══════╝"""
 
 
-def print_header(model_id: str):
+def print_header(model_id: str, is_agent: bool = False):
     model_name = model_id
     model_desc = ""
     for k, (mid, mname, mdesc) in MODELS.items():
@@ -101,16 +135,18 @@ def print_header(model_id: str):
     ascii_lines = PIPS_ASCII.strip("\n").splitlines()
     ascii_text = "\n".join(f"[bold cyan]{line}[/bold cyan]" for line in ascii_lines)
 
+    mode_label = "[bold magenta]🤖 AGENT MODE (VPS Control Active)[/bold magenta]" if is_agent else "[dim]Personal AI Infrastructure & Pipeline Server[/dim]"
+
     console.print()
     console.print(Panel(
         Text.from_markup(
             f"{ascii_text}\n\n"
-            f"[dim]Personal AI Infrastructure & Pipeline Server[/dim]\n\n"
-            f"[dim]Model  :[/dim] [bold green]{model_name}[/bold green]  [dim]{model_desc}[/dim]\n"
+            f"{mode_label}\n\n"
+            f"[dim]Model   :[/dim] [bold green]{model_name}[/bold green]  [dim]{model_desc}[/dim]\n"
             f"[dim]Model ID:[/dim] [blue]{model_id}[/blue]\n\n"
-            f"[dim]Type [/dim][bold]/help[/bold][dim] for commands  •  [/dim][bold]/model[/bold][dim] to switch model  •  [/dim][bold]/exit[/bold][dim] to quit[/dim]"
+            f"[dim]Type [/dim][bold]/help[/bold][dim] for commands  •  [/dim][bold]/agent[/bold][dim] to toggle agent  •  [/dim][bold]/exit[/bold][dim] to quit[/dim]"
         ),
-        border_style="cyan",
+        border_style="cyan" if not is_agent else "magenta",
         padding=(1, 2),
     ))
     console.print()
@@ -119,7 +155,7 @@ def print_header(model_id: str):
 # ──────────────────────────────────────────────
 # Model selector
 # ──────────────────────────────────────────────
-def select_model() -> str:
+def select_model(current_model: str = DEFAULT_MODEL_ID) -> str:
     console.print(Panel(
         "[bold cyan]Select Model[/bold cyan]",
         border_style="cyan",
@@ -128,7 +164,7 @@ def select_model() -> str:
     console.print()
 
     for k, (mid, mname, mdesc) in MODELS.items():
-        active = "●" if mid == DEFAULT_MODEL_ID else " "
+        active = "●" if mid == current_model else " "
         console.print(f"  [cyan]{k}[/cyan]  [green]{active}[/green]  [white]{mname}[/white]  [dim]{mdesc}[/dim]")
 
     console.print()
@@ -138,27 +174,27 @@ def select_model() -> str:
     try:
         choice = input("  Select [1-9]: ").strip()
     except (EOFError, KeyboardInterrupt):
-        return DEFAULT_MODEL_ID
+        return current_model
 
     if choice in MODELS:
         selected_id = MODELS[choice][0]
         console.print(f"\n  [green]✓[/green] Selected: [bold]{MODELS[choice][1]}[/bold]\n")
         return selected_id
 
-    return DEFAULT_MODEL_ID
+    return current_model
 
 
 # ──────────────────────────────────────────────
-# Stream chat (menggunakan urllib — no extra deps)
+# Stream chat (Zero external deps, Robust SSE)
 # ──────────────────────────────────────────────
-def stream_chat(messages: list, model_id: str) -> str:
-    """Stream response from 9Router, returns full text."""
+def stream_chat(messages: list, model_id: str):
+    """Stream response from 9Router, yields tokens safely."""
     url = f"{PIPS_BASE_URL}/chat/completions"
     headers = {
         "Content-Type":  "application/json",
         "Authorization": f"Bearer {API_KEY}",
         "Accept":        "text/event-stream",
-        "User-Agent":    "pips-cli/1.0",
+        "User-Agent":    "pips-cli/2.0",
     }
     payload = json.dumps({
         "model":    model_id,
@@ -168,7 +204,6 @@ def stream_chat(messages: list, model_id: str) -> str:
 
     req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
 
-    full_text = ""
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
             for raw_line in resp:
@@ -179,11 +214,12 @@ def stream_chat(messages: list, model_id: str) -> str:
                     json_str = line[6:]
                     try:
                         chunk = json.loads(json_str)
-                        delta = chunk.get("choices", [{}])[0].get("delta", {})
-                        content = delta.get("content", "")
-                        if content:
-                            full_text += content
-                            yield content
+                        choices = chunk.get("choices") or []
+                        if choices and len(choices) > 0:
+                            delta = choices[0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                yield content
                     except json.JSONDecodeError:
                         pass
     except urllib.error.HTTPError as e:
@@ -191,6 +227,8 @@ def stream_chat(messages: list, model_id: str) -> str:
         raise RuntimeError(f"HTTP {e.code}: {body}")
     except urllib.error.URLError as e:
         raise RuntimeError(f"Connection error: {e.reason}")
+    except (socket.timeout, TimeoutError):
+        raise RuntimeError("Request timed out while waiting for AI response.")
 
 
 # ──────────────────────────────────────────────
@@ -199,10 +237,8 @@ def stream_chat(messages: list, model_id: str) -> str:
 class ThinkingIndicator:
     def __init__(self):
         self._live = None
-        self._stop = False
 
     def __enter__(self):
-        self._stop = False
         spinner = Spinner("dots", text=Text.from_markup(" [dim]Thinking...[/dim]"))
         self._live = Live(spinner, console=console, refresh_per_second=10, transient=True)
         self._live.start()
@@ -214,12 +250,10 @@ class ThinkingIndicator:
 
 
 # ──────────────────────────────────────────────
-# Render response with streaming + markdown
+# Render response (No token loss, No double print)
 # ──────────────────────────────────────────────
 def render_response(model_id: str, messages: list) -> str:
-    """Show thinking spinner, then stream & render response."""
-
-    # Show label
+    """Show thinking spinner, then stream cleanly without duplicate panels."""
     model_label = model_id
     for k, (mid, mname, _) in MODELS.items():
         if mid == model_id:
@@ -227,94 +261,126 @@ def render_response(model_id: str, messages: list) -> str:
             break
 
     console.print()
-    console.print(f"  [bold cyan]●[/bold cyan] [dim]{model_label}[/dim]")
+    console.print(f"  [bold cyan]●[/bold cyan] [dim]{model_label}[/dim]\n")
 
-    # Thinking phase: spin until first token arrives
-    first_chunk_event = threading.Event()
-    full_text = []
-    error_holder = []
-    stream_gen = [None]
-
-    def start_stream():
-        try:
-            gen = stream_chat(messages, model_id)
-            stream_gen[0] = gen
-        except Exception as e:
-            error_holder.append(e)
-            first_chunk_event.set()
-
-    # Pre-create generator
     try:
         gen = stream_chat(messages, model_id)
     except Exception as e:
-        console.print(f"\n  [red]✗ Error:[/red] {e}\n")
+        console.print(f"  [red]✗ Error:[/red] {e}\n")
         return ""
 
-    # Show spinner while waiting for first chunk
-    collected = []
-    first = True
+    full_text = []
+
+    # Wait for first token under spinner
+    first_chunk = None
     with ThinkingIndicator():
         try:
             first_chunk = next(gen)
-            collected.append(first_chunk)
+            full_text.append(first_chunk)
         except StopIteration:
             pass
         except RuntimeError as e:
-            console.print(f"\n  [red]✗ Error:[/red] {e}\n")
+            console.print(f"  [red]✗ Error:[/red] {e}\n")
             return ""
 
-    # Now stream the rest with live rendering
-    console.print()
-    accumulated = "".join(collected)
+    # Print first token immediately
+    if first_chunk:
+        console.print(first_chunk, end="", markup=False, highlight=False)
+        sys.stdout.flush()
 
+    # Stream the rest of response
     try:
         for chunk in gen:
-            accumulated += chunk
-            # Print chunk directly (inline streaming feel)
+            full_text.append(chunk)
             console.print(chunk, end="", markup=False, highlight=False)
-
-        # Final render as markdown
-        console.print()  # newline after streaming
-        console.print()
-
-        # Re-render as formatted markdown block
-        if accumulated.strip():
-            console.print(Panel(
-                Markdown(accumulated),
-                border_style="dim",
-                padding=(0, 1),
-                box=box.ROUNDED,
-            ))
-
-    except RuntimeError as e:
-        console.print(f"\n  [red]✗ Error:[/red] {e}\n")
-        return ""
+            sys.stdout.flush()
+    except Exception as e:
+        console.print(f"\n  [red]✗ Stream interrupted:[/red] {e}")
 
     console.print()
-    return accumulated
+    console.print()
+    return "".join(full_text)
+
+
+# ──────────────────────────────────────────────
+# Agent Client Integration (Local & Remote)
+# ──────────────────────────────────────────────
+def run_agent_turn(prompt: str, is_local_vps: bool = False):
+    """Execute turn using VPS Agent (either directly or via Agent Server)."""
+    # Check if local pips-agent script exists on this machine
+    local_agent_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pips-agent")
+    if os.path.exists(local_agent_path):
+        import subprocess
+        proc = subprocess.run([local_agent_path, prompt])
+        return
+
+    # Otherwise stream from remote Agent Server
+    url = f"{PIPS_AGENT_URL}/api/agent/chat"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {API_KEY}",
+        "User-Agent": "pips-cli-agent/2.0"
+    }
+    payload = json.dumps({"prompt": prompt}).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+
+    console.print(f"\n  [bold magenta]🤖 Connecting to VPS Agent at {PIPS_AGENT_URL}...[/bold magenta]\n")
+
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            for raw_line in resp:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if line.startswith("data: "):
+                    try:
+                        ev = json.loads(line[6:])
+                        ev_type = ev.get("type")
+                        data = ev.get("data", {})
+                        if ev_type == "thought":
+                            console.print(f"  [dim italic]💭 Thinking: {data.get('thought', '').strip()}[/dim italic]")
+                        elif ev_type == "tool_call":
+                            name = data.get("name", "")
+                            args = json.dumps(data.get("arguments", {}))
+                            console.print(f"\n  [bold cyan]⚙ VPS Executing:[/bold cyan] [bold yellow]{name}[/bold yellow] {args}")
+                        elif ev_type == "tool_result":
+                            res = data.get("result", {})
+                            out = res.get("stdout") or str(res)
+                            snippet = out.strip()[:250] + ("..." if len(out) > 250 else "")
+                            console.print(f"  [bold green]✓ Result:[/bold green] [dim]{snippet}[/dim]")
+                        elif ev_type == "final_answer":
+                            console.print()
+                            console.print(Rule(style="cyan"))
+                            console.print()
+                            console.print(Markdown(data.get("content", "")))
+                            console.print()
+                    except json.JSONDecodeError:
+                        pass
+    except Exception as e:
+        console.print(f"  [red]✗ Failed to connect to VPS Agent Server:[/red] {e}")
+        console.print(f"  [dim]Make sure 'pips-agent serve' is running on your VPS, or check PIPS_AGENT_URL[/dim]\n")
 
 
 # ──────────────────────────────────────────────
 # Slash commands
 # ──────────────────────────────────────────────
-def handle_slash(cmd: str, model_id: str, messages: list) -> tuple[str, list, bool]:
-    """Returns (new_model_id, new_messages, should_continue)"""
+def handle_slash(cmd: str, model_id: str, messages: list, is_agent: bool) -> tuple[str, list, bool, bool]:
+    """Returns (model_id, messages, should_continue, is_agent)"""
     parts = cmd.strip().split(maxsplit=1)
     command = parts[0].lower()
 
     if command in ("/exit", "/quit", "/q"):
         console.print("\n  [dim]Goodbye.[/dim]\n")
-        return model_id, messages, False
+        return model_id, messages, False, is_agent
 
     elif command == "/help":
         console.print(Panel(
             Text.from_markup(
-                "[bold]Available Commands[/bold]\n\n"
+                "[bold]PIPS CLI Commands[/bold]\n\n"
                 "  [cyan]/model[/cyan]         — switch AI model\n"
-                "  [cyan]/clear[/cyan]         — clear chat history\n"
-                "  [cyan]/history[/cyan]       — show chat history\n"
                 "  [cyan]/models[/cyan]        — list available models\n"
-                "  [cyan]/status[/cyan]        — check 9Router status\n"
+                "  [cyan]/agent[/cyan]         — toggle Autonomous VPS Agent Mode\n"
+                "  [cyan]/clear[/cyan]         — clear chat history\n"
+                "  [cyan]/history[/cyan]       — show current conversation\n"
+                "  [cyan]/status[/cyan]        — check 9Router & VPS Agent status\n"
                 "  [cyan]/help[/cyan]          — show this help\n"
                 "  [cyan]/exit[/cyan]          — exit pips-cli\n\n"
                 "[dim]Tip: Use ↑↓ arrow keys to navigate history[/dim]"
@@ -322,13 +388,19 @@ def handle_slash(cmd: str, model_id: str, messages: list) -> tuple[str, list, bo
             border_style="cyan",
             padding=(0, 2),
         ))
-        return model_id, messages, True
+        return model_id, messages, True, is_agent
+
+    elif command == "/agent":
+        is_agent = not is_agent
+        status = "[bold green]ENABLED[/bold green]" if is_agent else "[dim]DISABLED (Chat mode)[/dim]"
+        console.print(f"\n  [magenta]🤖 Agent Mode:[/magenta] {status}\n")
+        return model_id, messages, True, is_agent
 
     elif command == "/model":
         console.print()
-        new_model = select_model()
+        new_model = select_model(model_id)
         console.print(f"  [green]✓[/green] Model switched to [bold]{new_model}[/bold]\n")
-        return new_model, messages, True
+        return new_model, messages, True, is_agent
 
     elif command == "/models":
         console.print()
@@ -338,14 +410,14 @@ def handle_slash(cmd: str, model_id: str, messages: list) -> tuple[str, list, bo
             console.print(f"  {active} [cyan]{k}[/cyan]  [white]{mname}[/white]  [dim]{mdesc}[/dim]")
             console.print(f"     [dim]{mid}[/dim]")
         console.print()
-        return model_id, messages, True
+        return model_id, messages, True, is_agent
 
     elif command == "/clear":
         messages_only = [m for m in messages if m["role"] == "system"]
         console.clear()
-        print_header(model_id)
+        print_header(model_id, is_agent)
         console.print("  [dim]Chat history cleared.[/dim]\n")
-        return model_id, messages_only, True
+        return model_id, messages_only, True, is_agent
 
     elif command == "/history":
         if not messages:
@@ -353,87 +425,128 @@ def handle_slash(cmd: str, model_id: str, messages: list) -> tuple[str, list, bo
         else:
             console.print()
             for m in messages:
-                role = m["role"]
-                content = m["content"][:200] + "..." if len(m["content"]) > 200 else m["content"]
+                role = m.get("role")
+                if role == "system":
+                    continue
+                content = m.get("content", "")
+                snippet = content[:150] + "..." if len(content) > 150 else content
                 if role == "user":
-                    console.print(f"  [bold cyan]You:[/bold cyan] {content}")
+                    console.print(f"  [bold cyan]You:[/bold cyan] {snippet}")
                 elif role == "assistant":
-                    console.print(f"  [bold green]AI:[/bold green]  {content}")
+                    console.print(f"  [bold green]AI:[/bold green]  {snippet}")
             console.print()
-        return model_id, messages, True
+        return model_id, messages, True, is_agent
 
     elif command == "/status":
         console.print()
+        # Health check
         try:
-            req = urllib.request.Request(
-                f"{PIPS_BASE_URL.replace('/v1', '')}/api/health",
-                headers={"Authorization": f"Bearer {API_KEY}"},
-            )
+            health_url = PIPS_BASE_URL.replace("/v1", "") + "/api/health"
+            req = urllib.request.Request(health_url, headers={"Authorization": f"Bearer {API_KEY}"})
             with urllib.request.urlopen(req, timeout=5) as r:
                 data = json.loads(r.read())
             if data.get("ok"):
-                console.print(f"  [green]✓[/green] 9Router: [bold green]ONLINE[/bold green]")
+                console.print(f"  [green]✓[/green] 9Router Gateway: [bold green]ONLINE[/bold green]")
             else:
-                console.print(f"  [yellow]⚠[/yellow] 9Router: [yellow]DEGRADED[/yellow]")
+                console.print(f"  [yellow]⚠[/yellow] 9Router Gateway: [yellow]DEGRADED[/yellow]")
         except Exception as e:
-            console.print(f"  [red]✗[/red] 9Router: [red]OFFLINE[/red] — {e}")
+            console.print(f"  [red]✗[/red] 9Router Gateway: [red]OFFLINE[/red] ({e})")
+
+        # VPS Agent Health check
+        try:
+            agent_req = urllib.request.Request(f"{PIPS_AGENT_URL}/health", headers={"Authorization": f"Bearer {API_KEY}"})
+            with urllib.request.urlopen(agent_req, timeout=3) as r:
+                adata = json.loads(r.read())
+            if adata.get("ok"):
+                console.print(f"  [green]✓[/green] VPS Agent Server: [bold green]ONLINE ({PIPS_AGENT_URL})[/bold green]")
+            else:
+                console.print(f"  [yellow]⚠[/yellow] VPS Agent Server: [yellow]DEGRADED[/yellow]")
+        except Exception:
+            console.print(f"  [dim]•[/dim] VPS Agent Server: [dim]NOT REACHABLE AT {PIPS_AGENT_URL}[/dim]")
+
         model_name = next((v[1] for v in MODELS.values() if v[0] == model_id), model_id)
-        console.print(f"  [dim]Endpoint: {PIPS_BASE_URL}[/dim]")
-        console.print(f"  [dim]Model:    {model_name} ({model_id})[/dim]\n")
-        return model_id, messages, True
+        console.print(f"  [dim]Gateway URL : {PIPS_BASE_URL}[/dim]")
+        console.print(f"  [dim]Active Model: {model_name} ({model_id})[/dim]\n")
+        return model_id, messages, True, is_agent
 
     else:
         console.print(f"  [yellow]Unknown command:[/yellow] {command}  (type [bold]/help[/bold])\n")
-        return model_id, messages, True
+        return model_id, messages, True, is_agent
 
 
 # ──────────────────────────────────────────────
-# Input prompt styled like kiro-cli
+# Input prompt
 # ──────────────────────────────────────────────
-def get_input() -> str:
-    console.print(Rule(style="dim"))
+def get_input(is_agent: bool = False) -> str:
+    console.print(Rule(style="magenta" if is_agent else "dim"))
+    prompt_sym = "  [magenta]🤖 agent ❯[/magenta] " if is_agent else "  ❯ "
     try:
-        # Use readline-enabled input for arrow key history
-        text = input("  ❯ ")
+        text = input(Text.from_markup(prompt_sym).plain)
     except (EOFError, KeyboardInterrupt):
         return "/exit"
     return text.strip()
 
 
 # ──────────────────────────────────────────────
-# Main loop
+# Main CLI Loop
 # ──────────────────────────────────────────────
 def main():
-    # Load env from pips.env if not already set
-    pips_env = os.path.expanduser("~/.pips/pips.env")
-    if os.path.exists(pips_env):
-        with open(pips_env) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, _, v = line.partition("=")
-                    os.environ.setdefault(k.strip(), v.strip())
+    # ── Parse CLI Arguments ──
+    args = sys.argv[1:]
+    is_agent = False
+    model_id = DEFAULT_MODEL_ID
+    one_shot_prompt = None
 
-    # Re-read after env loaded
-    global API_KEY, PIPS_BASE_URL
-    PIPS_BASE_URL = os.environ.get("PIPS_BASE_URL", PIPS_BASE_URL)
-    API_KEY = os.environ.get("PIPS_API_KEY", os.environ.get("OPENAI_API_KEY", API_KEY))
+    if args:
+        first = args[0]
+        if first in ("-h", "--help"):
+            print("Usage: pips-cli [OPTIONS] [PROMPT]")
+            print("\nInteractive AI chat and Autonomous VPS Agent CLI.")
+            print("\nOptions:")
+            print("  --select                  Choose model before starting")
+            print("  agent, --agent            Launch directly in Autonomous VPS Agent mode")
+            print("  -h, --help                Show this help message and exit")
+            print("  <1-9>                     Select model number directly (e.g. 'pips-cli 4')")
+            print("  <model-id>                Use specific model (e.g. 'pips-cli ag/claude-sonnet-4-6')")
+            print("\nExamples:")
+            print("  pips-cli                  Start interactive chat with default model")
+            print("  pips-cli agent            Control your VPS with the autonomous agent")
+            print("  pips-cli 4                Start chat using Claude Sonnet 4.6")
+            print("  pips-cli 'what is docker' Run single query and print result")
+            sys.exit(0)
+        elif first in ("agent", "--agent", "-a"):
+            is_agent = True
+            if len(args) > 1:
+                one_shot_prompt = " ".join(args[1:])
+        elif first == "--select":
+            model_id = select_model()
+        elif first in MODELS:
+            model_id = MODELS[first][0]
+            if len(args) > 1:
+                one_shot_prompt = " ".join(args[1:])
+        elif first in [m[0] for m in MODELS.values()]:
+            model_id = first
+            if len(args) > 1:
+                one_shot_prompt = " ".join(args[1:])
+        else:
+            # One shot prompt
+            one_shot_prompt = " ".join(args)
 
-    # Model selection at startup
+    if one_shot_prompt:
+        if is_agent:
+            run_agent_turn(one_shot_prompt)
+        else:
+            msgs = [
+                {"role": "system", "content": "You are PIPS AI, a helpful and precise assistant. Format answers clearly with markdown."},
+                {"role": "user", "content": one_shot_prompt}
+            ]
+            render_response(model_id, msgs)
+        sys.exit(0)
+
+    # Interactive mode
     console.clear()
+    print_header(model_id, is_agent)
 
-    # Quick start or model selection
-    import sys
-    if len(sys.argv) > 1 and sys.argv[1] in [m[0] for m in MODELS.values()]:
-        model_id = sys.argv[1]
-    elif len(sys.argv) > 1 and sys.argv[1] == "--select":
-        model_id = select_model()
-    else:
-        model_id = DEFAULT_MODEL_ID
-
-    print_header(model_id)
-
-    # System prompt
     messages = [
         {
             "role": "system",
@@ -444,10 +557,9 @@ def main():
         }
     ]
 
-    # ── Main chat loop ──
     while True:
         try:
-            user_input = get_input()
+            user_input = get_input(is_agent)
         except KeyboardInterrupt:
             console.print("\n  [dim]Use /exit to quit.[/dim]\n")
             continue
@@ -457,22 +569,23 @@ def main():
 
         save_history()
 
-        # Slash command
+        # Handle slash commands
         if user_input.startswith("/"):
-            model_id, messages, cont = handle_slash(user_input, model_id, messages)
+            model_id, messages, cont, is_agent = handle_slash(user_input, model_id, messages, is_agent)
             if not cont:
                 break
             continue
 
-        # Display user message
+        if is_agent:
+            run_agent_turn(user_input)
+            continue
+
+        # Regular Chat Mode
         console.print()
         console.print(f"  [bold white]You[/bold white]")
         console.print(f"  {user_input}")
 
-        # Add to history
         messages.append({"role": "user", "content": user_input})
-
-        # Get AI response
         response = render_response(model_id, messages)
 
         if response:

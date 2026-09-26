@@ -1,0 +1,1204 @@
+#!/usr/bin/env python3
+"""
+PIPS Agent — Autonomous AI Agent Server & Runtime for VPS
+Executes tasks on VPS: bash execution, file operations, system diagnostics, and Docker management.
+Provides CLI mode, Server daemon, and Web Dashboard.
+"""
+
+import os
+import sys
+import json
+import time
+import shutil
+import socket
+import urllib.request
+import urllib.error
+import subprocess
+import threading
+from http.server import HTTPServer, ThreadingHTTPServer, SimpleHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
+from datetime import datetime
+
+# Optional psutil for fast system metrics
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
+# Optional rich for beautiful CLI formatting
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.text import Text
+    from rich.markdown import Markdown
+    from rich.rule import Rule
+    from rich.table import Table
+    from rich import box
+    console = Console()
+    HAS_RICH = True
+except ImportError:
+    HAS_RICH = False
+    console = None
+
+# ──────────────────────────────────────────────
+# Configuration & Environment
+# ──────────────────────────────────────────────
+def load_env():
+    pips_env = os.path.expanduser("~/.pips/pips.env")
+    if os.path.exists(pips_env):
+        with open(pips_env, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    clean_val = v.strip().strip("'\"")
+                    os.environ.setdefault(k.strip(), clean_val)
+
+load_env()
+
+DEFAULT_BASE_URL = "http://127.0.0.1:20128/v1" if os.path.exists("/home/afif-sofi/.9router") else "https://pips.dvikara.cloud/v1"
+PIPS_BASE_URL = os.environ.get("PIPS_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
+PIPS_API_KEY = os.environ.get("PIPS_API_KEY", "sk-ffcd49f104f5ca66-hs6zum-6bae8b1c")
+AGENT_PORT = int(os.environ.get("PIPS_AGENT_PORT", "20130"))
+AGENT_MODEL = os.environ.get("PIPS_AGENT_MODEL", "ag/gemini-3.8-flash")
+
+# ──────────────────────────────────────────────
+# Safety guardrails
+# ──────────────────────────────────────────────
+BLOCKED_COMMANDS = [
+    "rm -rf /", "rm -rf /*", ":(){ :|:& };:", "mkfs", "dd if=/dev/zero of=/dev/",
+    "dd if=/dev/random of=/dev/", "> /dev/sda", "> /dev/vda", "shutdown -h now",
+    "init 0"
+]
+
+def is_command_safe(cmd: str) -> tuple[bool, str]:
+    cmd_clean = cmd.strip().lower()
+    for blocked in BLOCKED_COMMANDS:
+        if blocked in cmd_clean:
+            return False, f"Command contains forbidden pattern: '{blocked}'"
+    return True, ""
+
+
+# ──────────────────────────────────────────────
+# VPS Tools Implementation
+# ──────────────────────────────────────────────
+class VPSTools:
+    @staticmethod
+    def bash_run(command: str, timeout: int = 45) -> dict:
+        """Execute a bash command on the VPS."""
+        safe, reason = is_command_safe(command)
+        if not safe:
+            return {"ok": False, "error": f"Security restriction: {reason}", "exit_code": -1}
+
+        try:
+            start_t = time.time()
+            proc = subprocess.run(
+                ["bash", "-c", command],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=os.path.expanduser("~")
+            )
+            duration = round(time.time() - start_t, 2)
+            stdout = proc.stdout
+            stderr = proc.stderr
+
+            # Truncate if output is too massive
+            max_chars = 6000
+            if len(stdout) > max_chars:
+                stdout = stdout[:max_chars] + f"\n... [truncated, {len(proc.stdout) - max_chars} characters omitted]"
+            if len(stderr) > max_chars:
+                stderr = stderr[:max_chars] + f"\n... [truncated stderr]"
+
+            return {
+                "ok": proc.returncode == 0,
+                "exit_code": proc.returncode,
+                "stdout": stdout,
+                "stderr": stderr,
+                "duration_seconds": duration
+            }
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": f"Command timed out after {timeout} seconds", "exit_code": 124}
+        except Exception as e:
+            return {"ok": False, "error": str(e), "exit_code": 1}
+
+    @staticmethod
+    def file_read(path: str, start_line: int = 1, max_lines: int = 250) -> dict:
+        """Read lines from a file."""
+        expanded = os.path.expanduser(path)
+        if not os.path.exists(expanded):
+            return {"ok": False, "error": f"File not found: {path}"}
+        if os.path.isdir(expanded):
+            return {"ok": False, "error": f"Path is a directory, not a file: {path}"}
+
+        try:
+            lines = []
+            with open(expanded, "r", encoding="utf-8", errors="replace") as f:
+                for idx, line in enumerate(f, start=1):
+                    if idx >= start_line:
+                        lines.append(f"{idx}: {line.rstrip('\\n')}")
+                    if len(lines) >= max_lines:
+                        lines.append(f"... [truncated at {max_lines} lines]")
+                        break
+
+            return {
+                "ok": True,
+                "path": path,
+                "total_read": len(lines),
+                "content": "\n".join(lines)
+            }
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @staticmethod
+    def file_write(path: str, content: str, overwrite: bool = False) -> dict:
+        """Write content to a file."""
+        expanded = os.path.expanduser(path)
+        if os.path.exists(expanded) and not overwrite:
+            return {"ok": False, "error": f"File exists already. Set overwrite=true to overwrite."}
+
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(expanded)), exist_ok=True)
+            with open(expanded, "w", encoding="utf-8") as f:
+                f.write(content)
+            return {"ok": True, "path": path, "bytes_written": len(content)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @staticmethod
+    def file_edit(path: str, old_content: str, new_content: str) -> dict:
+        """Replace text in a file."""
+        expanded = os.path.expanduser(path)
+        if not os.path.exists(expanded):
+            return {"ok": False, "error": f"File not found: {path}"}
+
+        try:
+            with open(expanded, "r", encoding="utf-8") as f:
+                data = f.read()
+
+            if old_content not in data:
+                return {"ok": False, "error": "Target content not found in file."}
+
+            occurrences = data.count(old_content)
+            if occurrences > 1:
+                return {"ok": False, "error": f"Target content occurs {occurrences} times. Must be unique."}
+
+            updated = data.replace(old_content, new_content, 1)
+            with open(expanded, "w", encoding="utf-8") as f:
+                f.write(updated)
+
+            return {"ok": True, "path": path, "replaced": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @staticmethod
+    def file_list(path: str = ".", max_depth: int = 2) -> dict:
+        """List files and directories."""
+        expanded = os.path.expanduser(path)
+        if not os.path.exists(expanded):
+            return {"ok": False, "error": f"Directory not found: {path}"}
+
+        items = []
+        try:
+            expanded = os.path.abspath(expanded)
+            base_depth = expanded.rstrip(os.path.sep).count(os.path.sep)
+            for root, dirs, files in os.walk(expanded):
+                current_depth = root.count(os.path.sep) - base_depth
+                if current_depth >= max_depth:
+                    dirs.clear()
+                    continue
+
+                rel_root = os.path.relpath(root, expanded)
+                if rel_root == ".":
+                    rel_root = ""
+
+                for d in sorted(dirs):
+                    if d.startswith(".") and d not in (".pips", ".9router"):
+                        continue
+                    items.append({"type": "dir", "path": os.path.join(rel_root, d)})
+
+                for f in sorted(files):
+                    if f.startswith(".") and not f.startswith(".env"):
+                        continue
+                    fp = os.path.join(root, f)
+                    try:
+                        sz = os.path.getsize(fp)
+                    except OSError:
+                        sz = 0
+                    items.append({"type": "file", "path": os.path.join(rel_root, f), "size_bytes": sz})
+
+                if len(items) >= 200:
+                    items.append({"type": "info", "path": "... [truncated at 200 items]"})
+                    break
+
+            return {"ok": True, "base_path": path, "total": len(items), "items": items}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @staticmethod
+    def vps_status() -> dict:
+        """Get VPS system stats, resources, and Docker overview."""
+        metrics = {
+            "timestamp": datetime.now().isoformat(),
+            "hostname": socket.gethostname(),
+        }
+
+        # psutil metrics
+        if psutil:
+            metrics["cpu_percent"] = psutil.cpu_percent(interval=0.2)
+            vm = psutil.virtual_memory()
+            metrics["ram"] = {
+                "total_gb": round(vm.total / (1024**3), 2),
+                "used_gb": round(vm.used / (1024**3), 2),
+                "percent": vm.percent
+            }
+            disk = psutil.disk_usage("/")
+            metrics["disk"] = {
+                "total_gb": round(disk.total / (1024**3), 2),
+                "used_gb": round(disk.used / (1024**3), 2),
+                "percent": disk.percent
+            }
+            metrics["load_avg"] = [round(x, 2) for x in os.getloadavg()]
+        else:
+            metrics["load_avg"] = [round(x, 2) for x in os.getloadavg()]
+
+        # Docker status
+        try:
+            proc = subprocess.run(
+                ["docker", "ps", "--format", "{{.Names}}||{{.Status}}||{{.Ports}}"],
+                capture_output=True, text=True, timeout=5
+            )
+            containers = []
+            if proc.returncode == 0 and proc.stdout.strip():
+                for line in proc.stdout.strip().splitlines():
+                    parts = line.split("||")
+                    if len(parts) >= 2:
+                        containers.append({
+                            "name": parts[0],
+                            "status": parts[1],
+                            "ports": parts[2] if len(parts) > 2 else ""
+                        })
+            metrics["docker_containers"] = containers
+            metrics["docker_running_count"] = len(containers)
+        except Exception as e:
+            metrics["docker_error"] = str(e)
+
+        return {"ok": True, "metrics": metrics}
+
+    @staticmethod
+    def docker_action(action: str, container: str = "") -> dict:
+        """Perform action on Docker container (ps, logs, restart, stats)."""
+        action = action.lower().strip()
+        if action == "ps":
+            return VPSTools.vps_status()
+
+        if not container:
+            return {"ok": False, "error": "container name is required for action: " + action}
+
+        if action == "logs":
+            cmd = f"docker logs --tail 60 {container}"
+            return VPSTools.bash_run(cmd, timeout=10)
+        elif action == "restart":
+            cmd = f"docker restart {container}"
+            return VPSTools.bash_run(cmd, timeout=30)
+        elif action == "stats":
+            cmd = f"docker stats --no-stream {container}"
+            return VPSTools.bash_run(cmd, timeout=10)
+        else:
+            return {"ok": False, "error": f"Unsupported docker action: {action}"}
+
+
+# ──────────────────────────────────────────────
+# OpenAI Function Tools Definition
+# ──────────────────────────────────────────────
+TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "bash_run",
+            "description": "Execute a bash shell command on the VPS. Use this to inspect system services, run git commands, manage processes, check network, etc.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The exact shell command to run on the VPS."
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Max seconds before timeout (default: 45)."
+                    }
+                },
+                "required": ["command"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vps_status",
+            "description": "Get VPS system health, CPU, RAM, Disk usage, uptime, load averages, and list of running Docker containers.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "docker_action",
+            "description": "Inspect or manage Docker containers on the VPS.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["ps", "logs", "restart", "stats"],
+                        "description": "Action to perform on Docker."
+                    },
+                    "container": {
+                        "type": "string",
+                        "description": "Container name (e.g. 'pemtan-web', 'n8n'). Required for logs, restart, stats."
+                    }
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_read",
+            "description": "Read content from a file on the VPS.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Absolute or home-relative path of the file."},
+                    "start_line": {"type": "integer", "description": "Start line number (1-indexed)."},
+                    "max_lines": {"type": "integer", "description": "Maximum lines to read (default 200)."}
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_write",
+            "description": "Write or create a file on the VPS.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path."},
+                    "content": {"type": "string", "description": "File text content."},
+                    "overwrite": {"type": "boolean", "description": "Set to true if overwriting an existing file."}
+                },
+                "required": ["path", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_edit",
+            "description": "Edit an existing file by replacing an exact string match with new content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path to modify."},
+                    "old_content": {"type": "string", "description": "Exact text to find and replace."},
+                    "new_content": {"type": "string", "description": "Replacement text."}
+                },
+                "required": ["path", "old_content", "new_content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_list",
+            "description": "List directory contents on the VPS.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Directory path (default: current directory)."},
+                    "max_depth": {"type": "integer", "description": "Search depth (default: 2)."}
+                }
+            }
+        }
+    }
+]
+
+
+# ──────────────────────────────────────────────
+# Agent ReAct Engine
+# ──────────────────────────────────────────────
+class PIPSAgent:
+    def __init__(self, model_id: str = AGENT_MODEL, base_url: str = PIPS_BASE_URL, api_key: str = PIPS_API_KEY):
+        self.model_id = model_id
+        self.base_url = base_url
+        self.api_key = api_key
+        self.system_prompt = (
+            "You are PIPS Agent, an autonomous AI system engineer operating directly on this VPS server.\n"
+            "You have access to powerful tools to execute bash commands, manage files, monitor VPS resources, and inspect Docker containers.\n"
+            "Guidelines:\n"
+            "1. Be proactive: when asked to check or fix something, use your tools to inspect the real state first.\n"
+            "2. Execute commands with precision. Before modifying files or restarting services, verify their current state.\n"
+            "3. After tool execution, analyze the output and take subsequent actions or summarize findings clearly to the user.\n"
+            "4. Format command outputs, code, and system metrics with clear markdown formatting."
+        )
+
+    def dispatch_tool(self, name: str, args: dict) -> dict:
+        """Route tool call to appropriate python function."""
+        try:
+            if name == "bash_run":
+                return VPSTools.bash_run(args.get("command", ""), int(args.get("timeout", 45)))
+            elif name == "vps_status":
+                return VPSTools.vps_status()
+            elif name == "docker_action":
+                return VPSTools.docker_action(args.get("action", "ps"), args.get("container", ""))
+            elif name == "file_read":
+                return VPSTools.file_read(args.get("path", ""), int(args.get("start_line", 1)), int(args.get("max_lines", 200)))
+            elif name == "file_write":
+                return VPSTools.file_write(args.get("path", ""), args.get("content", ""), bool(args.get("overwrite", False)))
+            elif name == "file_edit":
+                return VPSTools.file_edit(args.get("path", ""), args.get("old_content", ""), args.get("new_content", ""))
+            elif name == "file_list":
+                return VPSTools.file_list(args.get("path", "."), int(args.get("max_depth", 2)))
+            else:
+                return {"ok": False, "error": f"Unknown tool: {name}"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def call_api(self, messages: list) -> dict:
+        """Call 9Router / OpenAI chat completions API."""
+        url = f"{self.base_url}/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+            "User-Agent": "pips-agent/1.0",
+        }
+        payload = {
+            "model": self.model_id,
+            "messages": messages,
+            "tools": TOOL_DEFINITIONS,
+            "stream": False,
+        }
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            body = resp.read().decode("utf-8")
+            return json.loads(body)
+
+    def run(self, user_prompt: str, history: list = None, event_callback=None, max_steps: int = 10) -> tuple[str, list]:
+        """
+        Run the ReAct autonomous loop.
+        event_callback(event_type, data) allows streaming events to UI/CLI/SSE:
+        event_type: 'thought' | 'tool_call' | 'tool_result' | 'final_answer' | 'error'
+        """
+        if history is None:
+            messages = [{"role": "system", "content": self.system_prompt}]
+        else:
+            messages = list(history)
+
+        messages.append({"role": "user", "content": user_prompt})
+
+        step = 0
+        final_answer = ""
+
+        while step < max_steps:
+            step += 1
+            try:
+                resp = self.call_api(messages)
+            except Exception as e:
+                err_msg = f"API Error: {e}"
+                if event_callback:
+                    event_callback("error", {"error": err_msg})
+                return err_msg, messages
+
+            choices = resp.get("choices", [])
+            if not choices:
+                break
+
+            choice = choices[0]
+            msg = choice.get("message", {})
+            reasoning = msg.get("reasoning_content", "")
+            content = msg.get("content", "") or ""
+            tool_calls = msg.get("tool_calls", [])
+
+            # Broadcast reasoning if present
+            if reasoning and event_callback:
+                event_callback("thought", {"thought": reasoning})
+
+            # If no tools called, we're done
+            if not tool_calls:
+                final_answer = content
+                messages.append({"role": "assistant", "content": content})
+                if event_callback:
+                    event_callback("final_answer", {"content": content})
+                break
+
+            # Add assistant message with tool calls to history
+            assistant_msg = {"role": "assistant", "content": content, "tool_calls": tool_calls}
+            messages.append(assistant_msg)
+
+            # Execute tool calls
+            for tc in tool_calls:
+                fn = tc.get("function", {})
+                name = fn.get("name", "")
+                call_id = tc.get("id", f"call_{step}")
+                try:
+                    args = json.loads(fn.get("arguments", "{}"))
+                except json.JSONDecodeError:
+                    args = {}
+
+                if event_callback:
+                    event_callback("tool_call", {"id": call_id, "name": name, "arguments": args})
+
+                # Run tool on VPS
+                result = self.dispatch_tool(name, args)
+
+                if event_callback:
+                    event_callback("tool_result", {"id": call_id, "name": name, "result": result})
+
+                # Append tool result to messages
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": json.dumps(result, ensure_ascii=False)
+                })
+
+        return final_answer, messages
+
+
+# ──────────────────────────────────────────────
+# Web Dashboard HTML
+# ──────────────────────────────────────────────
+DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PIPS Agent — VPS Mission Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #090d16;
+    --card: #121826;
+    --card-border: #1f293d;
+    --accent: #00f0ff;
+    --accent-glow: rgba(0, 240, 255, 0.18);
+    --green: #10b981;
+    --green-glow: rgba(16, 185, 129, 0.15);
+    --yellow: #f59e0b;
+    --red: #ef4444;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --dim: #475569;
+    --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  /* Topbar */
+  header {
+    background: rgba(18, 24, 38, 0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--card-border);
+    padding: 14px 28px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .logo-box {
+    background: linear-gradient(135deg, #00f0ff 0%, #3b82f6 100%);
+    color: #000;
+    font-weight: 800;
+    font-family: var(--font-mono);
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 14px;
+    letter-spacing: 1px;
+    box-shadow: 0 0 15px var(--accent-glow);
+  }
+  .brand-text h1 { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
+  .brand-text p { font-size: 11px; color: var(--muted); }
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--green-glow);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    color: var(--green);
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.85); } }
+
+  /* Main Layout */
+  .container {
+    max-width: 1440px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 24px;
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 24px;
+    flex: 1;
+  }
+  @media (max-width: 960px) { .container { grid-template-columns: 1fr; } }
+
+  /* Sidebar Stats */
+  .sidebar { display: flex; flex-direction: column; gap: 16px; }
+  .metric-card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    padding: 18px;
+  }
+  .metric-card h3 { font-size: 12px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.8px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .stat-item { background: #0c101a; border-radius: 8px; padding: 10px 12px; border: 1px solid rgba(255,255,255,0.04); }
+  .stat-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .stat-val { font-size: 18px; font-weight: 700; font-family: var(--font-mono); color: var(--accent); }
+  .progress-bar { width: 100%; height: 6px; background: #1e293b; border-radius: 4px; margin-top: 8px; overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.4s ease; }
+
+  /* Docker List */
+  .docker-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 10px;
+    background: #0c101a;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-family: var(--font-mono);
+  }
+  .docker-name { color: #e2e8f0; font-weight: 600; }
+  .docker-status { font-size: 11px; color: var(--green); }
+
+  /* Chat Pane */
+  .chat-pane {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    height: calc(100vh - 140px);
+  }
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    scroll-behavior: smooth;
+  }
+  .msg-row { display: flex; flex-direction: column; max-width: 90%; }
+  .msg-row.user { align-self: flex-end; align-items: flex-end; }
+  .msg-row.assistant { align-self: flex-start; align-items: flex-start; }
+  .msg-author { font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .msg-bubble {
+    padding: 14px 18px;
+    border-radius: 12px;
+    font-size: 14px;
+    line-height: 1.6;
+    word-break: break-word;
+  }
+  .msg-row.user .msg-bubble {
+    background: linear-gradient(135deg, #0284c7, #2563eb);
+    color: #fff;
+    border-bottom-right-radius: 2px;
+  }
+  .msg-row.assistant .msg-bubble {
+    background: #0f1624;
+    border: 1px solid var(--card-border);
+    color: var(--text);
+    border-bottom-left-radius: 2px;
+  }
+
+  /* Tool Execution Card */
+  .tool-box {
+    background: #080d17;
+    border: 1px solid #1e293b;
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin: 8px 0;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    width: 100%;
+  }
+  .tool-header { display: flex; justify-content: space-between; align-items: center; color: var(--accent); font-weight: 600; margin-bottom: 6px; }
+  .tool-body { background: #04070e; border-radius: 6px; padding: 8px 10px; color: #cbd5e1; overflow-x: auto; max-height: 220px; white-space: pre-wrap; font-size: 11px; }
+
+  /* Input Box */
+  .chat-input-bar {
+    padding: 16px 20px;
+    background: rgba(12, 16, 26, 0.95);
+    border-top: 1px solid var(--card-border);
+    display: flex;
+    gap: 12px;
+  }
+  .chat-input-bar textarea {
+    flex: 1;
+    background: #090d16;
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    color: #fff;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    resize: none;
+    height: 48px;
+    outline: none;
+    transition: border-color .2s;
+  }
+  .chat-input-bar textarea:focus { border-color: var(--accent); }
+  .btn-send {
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: 10px;
+    padding: 0 24px;
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .btn-send:hover { opacity: 0.9; transform: translateY(-1px); }
+  .btn-send:disabled { background: var(--dim); cursor: not-allowed; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="logo-box">PIPS</div>
+    <div class="brand-text">
+      <h1>Autonomous VPS Agent</h1>
+      <p>Personal AI Infrastructure & Pipeline Engine</p>
+    </div>
+  </div>
+  <div class="status-badge">
+    <div class="pulse-dot"></div>
+    <span>AGENT ONLINE</span>
+  </div>
+</header>
+
+<div class="container">
+  <!-- Left Column: Metrics -->
+  <aside class="sidebar">
+    <div class="metric-card">
+      <h3>VPS Resources <span id="vps-time" style="font-size:10px; color:var(--muted)"></span></h3>
+      <div class="stat-grid">
+        <div class="stat-item">
+          <div class="stat-label">CPU Usage</div>
+          <div class="stat-val" id="cpu-val">--%</div>
+          <div class="progress-bar"><div class="progress-fill" id="cpu-bar" style="width: 0%"></div></div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">RAM Usage</div>
+          <div class="stat-val" id="ram-val">--%</div>
+          <div class="progress-bar"><div class="progress-fill" id="ram-bar" style="width: 0%"></div></div>
+        </div>
+      </div>
+      <div style="margin-top: 12px;" class="stat-item">
+        <div class="stat-label">Disk Storage (/)</div>
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span class="stat-val" id="disk-val" style="font-size: 15px;">--%</span>
+          <span id="disk-details" style="font-size: 11px; color: var(--muted); font-family:var(--font-mono)">-- / -- GB</span>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" id="disk-bar" style="width: 0%"></div></div>
+      </div>
+    </div>
+
+    <div class="metric-card" style="flex:1;">
+      <h3>Docker Containers (<span id="docker-count">0</span>)</h3>
+      <div id="docker-list" style="max-height: 380px; overflow-y: auto;">
+        <div style="color:var(--muted); font-size:12px; padding:10px;">Loading containers...</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Right Column: Interactive Agent Chat -->
+  <main class="chat-pane">
+    <div class="chat-messages" id="chat-box">
+      <div class="msg-row assistant">
+        <div class="msg-author">PIPS Agent 🤖</div>
+        <div class="msg-bubble">
+          Hello! I am your <strong>Autonomous VPS Agent</strong>.<br>
+          I can execute bash commands, inspect Docker containers, read/edit files, and diagnose your server.<br>
+          <em>What would you like me to do on your VPS?</em>
+        </div>
+      </div>
+    </div>
+
+    <div class="chat-input-bar">
+      <textarea id="prompt-input" placeholder="Ask your agent (e.g. 'cek status docker pemtan', 'cek disk usage dan top 5 proses')..."></textarea>
+      <button class="btn-send" id="btn-send" onclick="sendPrompt()">Send ⚡</button>
+    </div>
+  </main>
+</div>
+
+<script>
+let isBusy = false;
+
+async function refreshStats() {
+  try {
+    const res = await fetch('/api/agent/status');
+    const data = await res.json();
+    if (data.ok && data.metrics) {
+      const m = data.metrics;
+      if (m.cpu_percent !== undefined) {
+        document.getElementById('cpu-val').innerText = m.cpu_percent + '%';
+        document.getElementById('cpu-bar').style.width = m.cpu_percent + '%';
+      }
+      if (m.ram) {
+        document.getElementById('ram-val').innerText = m.ram.percent + '%';
+        document.getElementById('ram-bar').style.width = m.ram.percent + '%';
+      }
+      if (m.disk) {
+        document.getElementById('disk-val').innerText = m.disk.percent + '%';
+        document.getElementById('disk-bar').style.width = m.disk.percent + '%';
+        document.getElementById('disk-details').innerText = `${m.disk.used_gb}/${m.disk.total_gb} GB`;
+      }
+      if (m.docker_containers) {
+        document.getElementById('docker-count').innerText = m.docker_containers.length;
+        const listEl = document.getElementById('docker-list');
+        listEl.innerHTML = '';
+        m.docker_containers.forEach(c => {
+          const div = document.createElement('div');
+          div.className = 'docker-item';
+          div.innerHTML = `<span class="docker-name">${c.name}</span><span class="docker-status">${c.status.split(' ')[0]}</span>`;
+          listEl.appendChild(div);
+        });
+      }
+    }
+  } catch(e) {
+    console.error('Stats error:', e);
+  }
+}
+
+setInterval(refreshStats, 5000);
+refreshStats();
+
+document.getElementById('prompt-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendPrompt();
+  }
+});
+
+async function sendPrompt() {
+  if (isBusy) return;
+  const inputEl = document.getElementById('prompt-input');
+  const text = inputEl.value.trim();
+  if (!text) return;
+
+  inputEl.value = '';
+  isBusy = true;
+  document.getElementById('btn-send').disabled = true;
+
+  const chatBox = document.getElementById('chat-box');
+
+  // User msg
+  const userRow = document.createElement('div');
+  userRow.className = 'msg-row user';
+  userRow.innerHTML = `<div class="msg-author">You</div><div class="msg-bubble">${escapeHtml(text)}</div>`;
+  chatBox.appendChild(userRow);
+
+  // Assistant msg placeholder
+  const assistRow = document.createElement('div');
+  assistRow.className = 'msg-row assistant';
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  bubble.innerHTML = '<span style="color:var(--muted)">Thinking & orchestrating tools...</span>';
+  assistRow.appendChild(document.createElement('div')).className = 'msg-author';
+  assistRow.querySelector('.msg-author').innerText = 'PIPS Agent 🤖';
+  assistRow.appendChild(bubble);
+  chatBox.appendChild(assistRow);
+  chatBox.scrollTop = chatBox.scrollHeight;
+
+  try {
+    const res = await fetch('/api/agent/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: text })
+    });
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    bubble.innerHTML = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\\n');
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const ev = JSON.parse(line.substring(6));
+            if (ev.type === 'tool_call') {
+              const toolCard = document.createElement('div');
+              toolCard.className = 'tool-box';
+              toolCard.id = 'tc-' + ev.data.id;
+              toolCard.innerHTML = `<div class="tool-header">⚙ Executing: ${ev.data.name}</div><div class="tool-body">${escapeHtml(JSON.stringify(ev.data.arguments, null, 2))}</div>`;
+              bubble.appendChild(toolCard);
+            } else if (ev.type === 'tool_result') {
+              const toolCard = document.getElementById('tc-' + ev.data.id);
+              if (toolCard) {
+                const out = ev.data.result.stdout || JSON.stringify(ev.data.result, null, 2);
+                toolCard.querySelector('.tool-body').innerText = out;
+              }
+            } else if (ev.type === 'final_answer') {
+              const ansDiv = document.createElement('div');
+              ansDiv.style.marginTop = '12px';
+              ansDiv.innerText = ev.data.content;
+              bubble.appendChild(ansDiv);
+            }
+          } catch(err) {}
+        }
+      }
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
+  } catch(e) {
+    bubble.innerHTML = `<span style="color:var(--red)">Connection Error: ${escapeHtml(e.message)}</span>`;
+  } finally {
+    isBusy = false;
+    document.getElementById('btn-send').disabled = false;
+    refreshStats();
+  }
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+}
+</script>
+</body>
+</html>
+"""
+
+
+# ──────────────────────────────────────────────
+# Agent HTTP Server & Handler
+# ──────────────────────────────────────────────
+class AgentServerHandler(SimpleHTTPRequestHandler):
+    agent_instance = None
+
+    def end_headers(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.end_headers()
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path in ("/", "/dashboard", "/agent"):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(DASHBOARD_HTML.encode("utf-8"))
+            return
+
+        elif path in ("/api/agent/status", "/health"):
+            data = VPSTools.vps_status()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(data).encode("utf-8"))
+            return
+
+        elif path == "/api/agent/tools":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True, "tools": TOOL_DEFINITIONS}).encode("utf-8"))
+            return
+
+        self.send_response(404)
+        self.end_headers()
+        self.wfile.write(b"Not Found")
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path == "/api/agent/chat":
+            content_len = int(self.headers.get("Content-Length", 0))
+            post_body = self.rfile.read(content_len).decode("utf-8")
+            try:
+                body = json.loads(post_body)
+            except json.JSONDecodeError:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b'{"error": "Invalid JSON"}')
+                return
+
+            prompt = body.get("prompt", "")
+            if not prompt:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b'{"error": "prompt is required"}')
+                return
+
+            # SSE Response
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+
+            def event_cb(ev_type, data):
+                packet = f"data: {json.dumps({'type': ev_type, 'data': data}, ensure_ascii=False)}\\n\\n"
+                try:
+                    self.wfile.write(packet.encode("utf-8"))
+                    self.wfile.flush()
+                except Exception:
+                    pass
+
+            # Run agent loop
+            self.agent_instance.run(prompt, event_callback=event_cb)
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
+
+def start_server(port: int = AGENT_PORT):
+    agent = PIPSAgent()
+    AgentServerHandler.agent_instance = agent
+    server = ThreadingHTTPServer(("0.0.0.0", port), AgentServerHandler)
+    print(f"🚀 PIPS Agent Server running on http://0.0.0.0:{port}")
+    print(f"📊 Dashboard available at: http://localhost:{port}/")
+    print(f"⚡ Model: {agent.model_id} via {agent.base_url}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopping PIPS Agent Server...")
+        server.server_close()
+
+
+# ──────────────────────────────────────────────
+# Interactive CLI Mode
+# ──────────────────────────────────────────────
+def run_cli(prompt: str = None):
+    agent = PIPSAgent()
+
+    if HAS_RICH:
+        console.print(Panel(
+            Text.from_markup(
+                f"[bold cyan]PIPS Autonomous VPS Agent[/bold cyan]\n"
+                f"[dim]Model :[/dim] [green]{agent.model_id}[/green]\n"
+                f"[dim]Target:[/dim] [white]Local VPS ({socket.gethostname()})[/white]\n"
+                f"[dim]Tools :[/dim] [blue]bash_run, vps_status, docker_action, file_read/write/edit[/blue]"
+            ),
+            border_style="cyan",
+            padding=(0, 2)
+        ))
+    else:
+        print(f"=== PIPS Autonomous VPS Agent ({agent.model_id}) ===")
+
+    def cli_event_cb(ev_type, data):
+        if HAS_RICH:
+            if ev_type == "thought":
+                console.print(f"\n[dim italic]💭 Thinking: {data.get('thought', '').strip()}[/dim italic]")
+            elif ev_type == "tool_call":
+                name = data.get("name", "")
+                args = data.get("arguments", {})
+                console.print(f"\n  [bold cyan]⚙ Tool Calling:[/bold cyan] [bold yellow]{name}[/bold yellow] {json.dumps(args)}")
+            elif ev_type == "tool_result":
+                res = data.get("result", {})
+                if res.get("ok"):
+                    out = res.get("stdout") or str(res)
+                    snippet = out.strip()[:300] + ("..." if len(out) > 300 else "")
+                    console.print(f"  [bold green]✓ Output:[/bold green] [dim]{snippet}[/dim]")
+                else:
+                    console.print(f"  [bold red]✗ Tool Error:[/bold red] {res.get('error', 'failed')}")
+            elif ev_type == "final_answer":
+                console.print()
+                console.print(Rule(style="cyan"))
+                console.print()
+                console.print(Markdown(data.get("content", "")))
+                console.print()
+        else:
+            if ev_type == "tool_call":
+                print(f"[Tool Call] {data.get('name')}: {data.get('arguments')}")
+            elif ev_type == "tool_result":
+                print(f"[Tool Result] ok={data.get('result', {}).get('ok')}")
+            elif ev_type == "final_answer":
+                print(f"\n[Agent Answer]:\n{data.get('content')}\n")
+
+    history = None
+    if prompt:
+        agent.run(prompt, history=history, event_callback=cli_event_cb)
+        return
+
+    while True:
+        try:
+            user_in = input("\n[pips-agent] ❯ ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\nExiting agent.")
+            break
+        if not user_in:
+            continue
+        if user_in in ("/exit", "/quit", "exit", "quit"):
+            break
+
+        _, history = agent.run(user_in, history=history, event_callback=cli_event_cb)
+
+
+# ──────────────────────────────────────────────
+# Main Entry Point
+# ──────────────────────────────────────────────
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        arg = sys.argv[1].lower()
+        if arg in ("serve", "--serve", "server", "-s"):
+            port = int(sys.argv[2]) if len(sys.argv) > 2 else AGENT_PORT
+            start_server(port)
+            sys.exit(0)
+        elif arg in ("--help", "-h"):
+            print("Usage:")
+            print("  pips-agent                    # Interactive CLI agent mode")
+            print("  pips-agent 'task prompt'      # Run single agent task")
+            print("  pips-agent serve [port]       # Start Agent Server & Web Dashboard")
+            sys.exit(0)
+        else:
+            # Single prompt mode
+            run_cli(" ".join(sys.argv[1:]))
+            sys.exit(0)
+
+    run_cli()
