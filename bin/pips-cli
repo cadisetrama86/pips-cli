@@ -273,25 +273,46 @@ class SmartAutoRouter:
         if self._cached_local_models and not force and (now - self._last_local_check < self._check_interval):
             return self._cached_local_models
 
-        url = f"{self.ollama_url}/api/tags"
-        req = urllib.request.Request(url, headers={"User-Agent": "pips-cli/2.0"}, method="GET")
-        try:
-            with urllib.request.urlopen(req, timeout=1.0) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                models = [m.get("name") or m.get("model") for m in data.get("models", []) if m.get("name") or m.get("model")]
-                sorted_models = []
-                for prio in ("hermes-gemma:4b", "hermes-gemma", "hermes3:3b", "hermes3", "qwen", "llama", "gemma", "mistral"):
-                    for m in models:
-                        if prio in m.lower() and m not in sorted_models:
-                            sorted_models.append(m)
-                for m in models:
-                    if m not in sorted_models:
+        discovered = []
+
+        # 1. Try Direct Ollama endpoint with 2.5s timeout
+        for host in (self.ollama_url, "http://127.0.0.1:11434", "http://localhost:11434"):
+            url = f"{host}/api/tags"
+            req = urllib.request.Request(url, headers={"User-Agent": "pips-cli/2.0"}, method="GET")
+            try:
+                with urllib.request.urlopen(req, timeout=2.5) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    models = [m.get("name") or m.get("model") for m in data.get("models", []) if m.get("name") or m.get("model")]
+                    if models:
+                        discovered = models
+                        break
+            except Exception:
+                pass
+
+        # 2. Fallback: check 9Router cached model list if direct tags failed
+        if not discovered and model_service.models:
+            for m in model_service.models:
+                m_id = m.get("id", "")
+                if m_id.startswith("ollama/"):
+                    discovered.append(m_id.split('/', 1)[1])
+                elif "hermes" in m_id.lower() and "/" not in m_id:
+                    discovered.append(m_id)
+
+        if discovered:
+            sorted_models = []
+            for prio in ("hermes-gemma:4b", "hermes-gemma", "hermes3:3b", "hermes3", "qwen", "llama", "gemma", "mistral"):
+                for m in discovered:
+                    if prio in m.lower() and m not in sorted_models:
                         sorted_models.append(m)
-                self._cached_local_models = sorted_models
-                self._last_local_check = now
-                return self._cached_local_models
-        except Exception:
+            for m in discovered:
+                if m not in sorted_models:
+                    sorted_models.append(m)
+            self._cached_local_models = sorted_models
             self._last_local_check = now
+            return self._cached_local_models
+        else:
+            # Do not lock cache on failure so next prompt can retry immediately
+            self._last_local_check = 0
             return []
 
     def is_local_online(self) -> bool:
