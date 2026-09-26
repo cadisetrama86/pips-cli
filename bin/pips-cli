@@ -501,6 +501,8 @@ def stream_chat(messages: list, model_id: str):
 
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
+            reasoning_chunks = []
+            yielded_any = False
             for raw_line in resp:
                 line = raw_line.decode("utf-8", errors="replace").strip()
                 if not line or line == "data: [DONE]":
@@ -513,10 +515,20 @@ def stream_chat(messages: list, model_id: str):
                         if choices and len(choices) > 0:
                             delta = choices[0].get("delta", {})
                             content = delta.get("content", "")
+                            reasoning = delta.get("reasoning_content", "")
+                            if reasoning:
+                                reasoning_chunks.append(reasoning)
                             if content:
+                                yielded_any = True
                                 yield content
                     except json.JSONDecodeError:
                         pass
+
+            # Fallback if model only produced reasoning or malformed function call without direct content
+            if not yielded_any and reasoning_chunks:
+                full_reasoning = "".join(reasoning_chunks).strip()
+                if full_reasoning:
+                    yield f"*{full_reasoning}*\n\n*(Catatan: Mode chat aktif tanpa eksekusi langsung. Ketik `/agent` untuk menjalankan perintah/inspeksi file otomatis.)*"
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"HTTP {e.code}: {body}")
@@ -551,6 +563,7 @@ def render_response(model_id: str, messages: list) -> str:
 
     full_text = []
     first_chunk = None
+    stream_err = None
 
     with ThinkingIndicator():
         try:
@@ -558,9 +571,12 @@ def render_response(model_id: str, messages: list) -> str:
             full_text.append(first_chunk)
         except StopIteration:
             pass
-        except RuntimeError as e:
-            console.print(f"\n  [red]✗ Error:[/red] {e}\n")
-            return ""
+        except Exception as e:
+            stream_err = str(e)
+
+    if stream_err:
+        console.print(f"\n  [red]✗ Error:[/red] {stream_err}\n")
+        return ""
 
     console.print()
     if first_chunk:
@@ -574,6 +590,9 @@ def render_response(model_id: str, messages: list) -> str:
             sys.stdout.flush()
     except Exception as e:
         console.print(f"\n  [red]✗ Stream interrupted:[/red] {e}")
+
+    if not full_text:
+        console.print("\n  [dim yellow]⚠ Model tidak mengembalikan teks jawaban. Coba kirim ulang, beralih ke `/agent` untuk eksekusi perintah, atau pilih model lain dengan `/models`.[/dim yellow]")
 
     console.print()
     console.print()
@@ -596,6 +615,28 @@ def run_agent_turn(prompt: str):
 
     if not local_agent_path and shutil.which("pips-agent"):
         local_agent_path = shutil.which("pips-agent")
+
+    # If missing locally on client, auto-download pips-agent.py for instant local execution
+    if not local_agent_path:
+        agent_dest = os.path.join(script_dir, "pips-agent.py")
+        sources = [
+            "https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/bin/pips-agent",
+            "https://pips.dvikara.cloud/pips-agent.py"
+        ]
+        for src in sources:
+            try:
+                console.print("  [dim]Downloading Autonomous Agent module...[/dim]")
+                req = urllib.request.Request(src, headers={"User-Agent": "pips-cli/2.0"})
+                with urllib.request.urlopen(req, timeout=12) as r:
+                    content = r.read()
+                    if content and len(content) > 1000:
+                        with open(agent_dest, "wb") as f:
+                            f.write(content)
+                        local_agent_path = agent_dest
+                        console.print("  [green]✓[/green] [dim]Autonomous Agent ready locally.[/dim]")
+                        break
+            except Exception:
+                pass
 
     if local_agent_path:
         import subprocess
@@ -625,7 +666,7 @@ def run_agent_turn(prompt: str):
                     try:
                         ev = json.loads(line[6:])
                         ev_type = ev.get("type")
-                        data = ev.get("data", {})
+                        data = data = ev.get("data", {})
                         if ev_type == "thought":
                             console.print(f"  [dim italic]💭 Thinking: {data.get('thought', '').strip()}[/dim italic]")
                         elif ev_type == "tool_call":
@@ -795,14 +836,17 @@ def run_chat_session(initial_model_id: str = None, start_agent: bool = False):
         {
             "role": "system",
             "content": (
-                f"You are PIPS AI, a helpful coding and system assistant powered by 9Router.\n"
+                f"You are PIPS AI, a helpful AI coding and system assistant powered by 9Router.\n"
                 f"Active environment:\n"
                 f"- Working Directory (CWD): {cwd}\n"
                 f"- Operating System: {os_name} ({sys.platform})\n"
                 f"- Current User: {user_name}\n\n"
-                f"Important:\n"
-                f"When the user refers to 'path ini', 'folder ini', 'disini', or relative paths, they mean: {cwd}.\n"
-                f"Be concise, precise, and helpful. Use proper code formatting matching {os_name}."
+                f"Operational Rules:\n"
+                f"- You are in interactive terminal chat mode. You do NOT have tool execution in this mode. NEVER produce function calls or tool calls.\n"
+                f"- When the user asks to check files, list folders, or run commands (e.g. 'cek ada folder apa aja', 'ls', 'dir'), provide the exact {os_name} terminal commands to run (e.g. PowerShell/CMD commands) with clear explanations.\n"
+                f"- Remind the user they can type /agent if they want PIPS to automatically inspect files and execute commands.\n"
+                f"- When the user refers to 'path ini', 'folder ini', 'disini', or relative paths, they mean: {cwd}.\n"
+                f"- Be concise, direct, and practical."
             )
         }
     ]
@@ -852,11 +896,16 @@ def main():
     model_service.fetch_models()
     if model_service.models:
         current_model_id = model_service.models[0]["id"]
-        # Prefer gemini-3.8-flash if present
+        # Find exact base flash model first (prefer ag/gemini-3.8-flash without -medium, -high, -low)
         for m in model_service.models:
-            if "gemini-3.8-flash" in m["id"] and "low" not in m["id"] and "high" not in m["id"]:
+            if m["id"] == "ag/gemini-3.8-flash":
                 current_model_id = m["id"]
                 break
+        else:
+            for m in model_service.models:
+                if "gemini-3.8-flash" in m["id"] and "medium" not in m["id"] and "high" not in m["id"] and "low" not in m["id"]:
+                    current_model_id = m["id"]
+                    break
 
     args = sys.argv[1:]
 
@@ -901,7 +950,10 @@ def main():
             msgs = [
                 {
                     "role": "system",
-                    "content": f"You are PIPS AI. Active CWD: {cwd} on {os_name}."
+                    "content": (
+                        f"You are PIPS AI. Active CWD: {cwd} on {os_name}. "
+                        f"You are in terminal mode without tool execution; provide direct explanations and exact commands."
+                    )
                 },
                 {"role": "user", "content": one_shot_prompt}
             ]

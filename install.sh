@@ -139,10 +139,10 @@ TMP_AGENT=$(mktemp)
 
 if command -v curl &>/dev/null; then
     curl -fsSL "$REPO_RAW/pips-cli.py" -o "$TMP" || err "Download failed. Check internet connection."
-    curl -fsSL "$REPO_RAW/pips-agent.py" -o "$TMP_AGENT" 2>/dev/null || true
+    curl -fsSL "$REPO_RAW/pips-agent.py" -o "$TMP_AGENT" 2>/dev/null || curl -fsSL "https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/bin/pips-agent" -o "$TMP_AGENT" 2>/dev/null || true
 elif command -v wget &>/dev/null; then
     wget -q "$REPO_RAW/pips-cli.py" -O "$TMP" || err "Download failed."
-    wget -q "$REPO_RAW/pips-agent.py" -O "$TMP_AGENT" 2>/dev/null || true
+    wget -q "$REPO_RAW/pips-agent.py" -O "$TMP_AGENT" 2>/dev/null || wget -q "https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/bin/pips-agent" -O "$TMP_AGENT" 2>/dev/null || true
 else
     err "curl or wget required."
 fi

@@ -194,7 +194,14 @@ try {
 try {
     Invoke-WebRequest -Uri "$REPO_RAW/pips-agent.py" -OutFile $AGENT_PY_DEST -UseBasicParsing
     Write-Success "Downloaded → $AGENT_PY_DEST"
-} catch {}
+} catch {
+    try {
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/bin/pips-agent" -OutFile $AGENT_PY_DEST -UseBasicParsing
+        Write-Success "Downloaded → $AGENT_PY_DEST (via GitHub fallback)"
+    } catch {
+        Write-Warn "Notice: pips-agent download will be completed on first use"
+    }
+}
 
 # ── Create .cmd wrappers ──────────────────────────────────────
 $CMD_DEST = "$INSTALL_DIR\$WRAPPER_NAME"
