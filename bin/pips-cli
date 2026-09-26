@@ -377,11 +377,11 @@ class TokenOptimizer:
         user_name = os.environ.get("USERNAME") or os.environ.get("USER") or "user"
 
         if is_local or TokenOptimizer.is_local_model(model_id):
-            # Hermes / Local Compact High-Density System Prompt (saves ~200+ tokens per turn)
+            clean_name = model_id.replace("ollama/", "")
             return (
-                f"You are PIPS AI powered by local model '{model_id}' (running offline on Ollama).\n"
-                f"CWD: {cwd} ({os_name}, user: {user_name}).\n"
-                f"Rules: Provide direct, accurate answers and exact commands/code with zero unnecessary fluff. If asked about your model, state you are running locally via Ollama ({model_id}). Suggest /agent for autonomous actions."
+                f"You are PIPS AI, an intelligent coding and technical assistant running locally via Ollama ({clean_name}).\n"
+                f"Active environment: {cwd} ({os_name}, user: {user_name}).\n"
+                f"Instructions: Answer helpfully, accurately, and concisely in the user's preferred language (e.g. Indonesian/English). Provide direct code and explanations. If asked what model you are running, state you are {clean_name} running locally on Ollama (0 cloud tokens)."
             )
         else:
             return (
