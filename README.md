@@ -1,152 +1,130 @@
-# PIPS CLI & Autonomous VPS Agent
+<div align="center">
 
 ```
- ██████╗ ██╗██████╗ ███████╗
- ██╔══██╗██║██╔══██╗██╔════╝
- ██████╔╝██║██████╔╝███████╗
- ██╔═══╝ ██║██╔═══╝ ╚════██║
- ██║     ██║██║     ███████║
- ╚═╝     ╚═╝╚═╝     ╚══════╝
+        ╱████████████████████╲
+  ╱████      🔥      🔥      ████╲
+ ╱████████████████████████████████╲
+╱██████████████████████████████████╲
+       ╲████████████████████╱
+             ╲████████╱
+                ╲██╱
+
+† † †        ╔══════════════════╗        † † †
+CRIMSON      ║     PIPS  AI     ║       SHADOW
+† † †        ╚══════════════════╝        † † †
+
+     ██████╗ ██╗██████╗ ███████╗
+     ██╔══██╗██║██╔══██╗██╔════╝
+     ██████╔╝██║██████╔╝███████╗
+     ██╔═══╝ ██║██╔═══╝ ╚════██║
+     ██║     ██║██║     ███████║
+     ╚═╝     ╚═╝╚═╝     ╚══════╝
+
+  †         †         †         †         †
+ /|\       /|\       /|\       /|\       /|\
+/_|_\     /_|_\     /_|_\     /_|_\     /_|_\
 ```
 
-**Personal AI Infrastructure & Autonomous VPS Agent Engine**
+# PIPS CLI
+### AI Development Companion & Autonomous Agent Engine
 
-GAS CAK NDANG DIGAWE OJOK NYOCOT AE
+[![Version](https://img.shields.io/badge/version-2.0.0-crimson.svg)](https://github.com/cadisetrama86/pips-cli)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-black.svg)](https://github.com/cadisetrama86/pips-cli)
+[![Gateway](https://img.shields.io/badge/router-9Router%20Dynamic-red.svg)](https://github.com/cadisetrama86/pips-cli)
+[![License](https://img.shields.io/badge/license-MIT-darkred.svg)](https://github.com/cadisetrama86/pips-cli)
+
+*A powerful, lightweight, pure terminal AI coding companion & autonomous agent with dynamic model discovery, local web preview, and instant self-updating.*
 
 ---
 
-## Fitur Utama
+</div>
 
-- 🚀 **1-Command Zero-Friction Setup**: Cukup jalankan satu perintah di terminal — sistem otomatis memasang Python (jika belum ada), memasang library yang dibutuhkan, mengatur PATH, dan **langsung membuka `pips-cli` detik itu juga**.
-- 🤖 **Autonomous VPS Agent**: Agen AI otonom yang beroperasi langsung di VPS untuk mengeksekusi shell command (`bash_run`), memantau dan me-restart container Docker (`docker_action`), membaca serta mengedit file (`file_read`, `file_write`, `file_edit`), dan memeriksa kesehatan server (`vps_status`).
-- ⚡ **Interactive Chat TUI Bebas Glitch**: Chat token-by-token yang mulus dengan model canggih (Gemini 3.8 Flash, Claude Sonnet 4.6, Claude Opus Thinking, Gemini Pro Agent) tanpa token terpotong dan tanpa double render.
-- 🌐 **Web Mission Control Dashboard**: Antarmuka web responsif bertema dark cyber di VPS yang dapat diakses langsung dari browser komputer atau ponsel tanpa setup tambahan.
-- 🪟 **True Cross-Platform**: Kompatibel penuh dan stabil di Windows (PowerShell/CMD/WSL), Linux, dan macOS.
+## ⚡ Mengenal PIPS CLI
+
+**PIPS CLI** adalah asisten pengembang berbasis terminal (TUI) yang cepat dan dirancang untuk interaksi AI tanpa hambatan (*zero-friction*). Didukung oleh gateway terintegrasi, PIPS menghubungkan Anda langsung dengan berbagai model AI modern tanpa konfigurasi rumit.
+
+### 🌟 Fitur Unggulan
+
+- 🖥️ **Pure Terminal Interface**: Antarmuka TUI bergaya *dark crimson gothic* yang bersih, responsif, dan ringan tanpa dependensi GUI.
+- 🤖 **Autonomous Coding Agent**: Mampu membaca file, menulis kode, memodifikasi berkas dengan *unified diff*, mengeksekusi perintah shell, dan menguji hasil secara mandiri.
+- 🔄 **Dynamic Model Discovery**: Temukan dan ganti model AI (Gemini, Claude, GPT, DeepSeek, dsb.) secara interaktif langsung dari gateway tanpa *hardcode*.
+- 🌐 **Instant Local Preview Server**: Sajikan file proyek HTML/CSS/JS secara instan di `http://localhost:3000` dengan 1 perintah.
+- 🧠 **Persistent Session Memory**: Percakapan dan konteks agen tersimpan aman lintas sesi di folder kerja aktif Anda.
+- 🔄 **1-Command Self Updater**: Perbarui aplikasi secara instan kapan saja langsung dari terminal.
 
 ---
 
-## Cara Install di Komputer Anda (1 Perintah Saja)
+## 🚀 Cara Download & Instalasi (1 Perintah Saja)
+
+Pilih sistem operasi Anda dan jalankan perintah di bawah ini:
 
 ### 🪟 Windows (PowerShell)
-Buka PowerShell, jalankan:
+
+Buka PowerShell, lalu salin dan jalankan:
+
 ```powershell
-iwr -useb https://pips.dvikara.cloud/install.ps1 | iex
+irm https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/install.ps1 | iex
 ```
-> **Catatan:** Jika belum ada Python di Windows Anda, installer akan otomatis mengunduh dan memasangnya di background secara senyap (*silent*). Begitu selesai, `pips-cli` langsung terbuka otomatis!
+
+> **Catatan**: Jika Python belum terpasang di komputer Anda, installer akan otomatis menyiapkan semuanya di latar belakang. Begitu instalasi selesai, PIPS CLI akan langsung terbuka otomatis.
+
+---
 
 ### 🐧 Linux & 🍎 macOS (Terminal)
-Buka terminal, jalankan:
+
+Buka terminal, lalu salin dan jalankan:
+
 ```bash
-curl -fsSL https://pips.dvikara.cloud/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cadisetrama86/pips-cli/main/install.sh | bash
 ```
-> Otomatis memasang dependency dan langsung masuk ke sesi interaktif `pips-cli`.
 
 ---
 
-## Cara Pakai
+## 💡 Cara Pakai Cepat
 
-### 1. Mode Autonomous VPS Agent (Kendalikan VPS Anda)
-Jalankan tugas atau inspeksi VPS langsung dari terminal komputer Anda:
+Setelah terpasang, perintah `pips-cli` dapat dijalankan dari folder mana saja di terminal Anda:
+
 ```bash
-# Masuk ke sesi interaktif Agen
-pips-cli agent
-
-# Atau berikan instruksi tugas langsung (one-shot)
-pips-cli agent "cek status disk dan container docker pemtan di VPS"
-pips-cli agent "baca 50 baris terakhir log container pemtan-api"
-pips-cli agent "cek pemakaian CPU dan RAM saat ini"
-```
-> Di dalam sesi chat biasa, Anda juga bisa mengetik `/agent` untuk berpindah ke mode agen kapan saja!
-
-### 2. Mode Chat AI Reguler
-```bash
-# Mulai chat langsung (Default: Gemini 3.8 Flash)
+# 1. Buka Menu Utama Interaktif
 pips-cli
 
-# Pilih model interaktif di awal
-pips-cli --select
+# 2. Mulai Sesi Chat Langsung
+pips-cli chat
 
-# Langsung pilih model berdasarkan nomor (1-9)
-pips-cli 4        # Claude Sonnet 4.6
-pips-cli 5        # Claude Opus Thinking
-pips-cli 6        # Gemini Pro Agent
+# 3. Jalankan Autonomous Agent
+pips-cli agent
 
-# Pertanyaan sekali jalan (one-shot query)
-pips-cli "jelaskan perbedaan docker run dan docker compose singkat"
+# 4. Preview Web Project di Folder Ini (http://localhost:3000)
+pips-cli preview
+
+# 5. Tanya Cepat (One-shot prompt)
+pips-cli "apa fungsi docker compose?"
+
+# 6. Update ke Versi Rilis Terbaru
+pips-cli update
 ```
-
-### 3. Web Mission Control Dashboard
-Buka browser di komputer Anda dan buka alamat:
-```
-http://<IP-VPS-ANDA>:20130/
-```
-*(Atau via Tailscale IP `http://100.90.156.126:20130/` atau `https://pips.dvikara.cloud/agent` jika Nginx sudah di-reload)*
-
-Fitur Dashboard:
-- Status VPS live (Gauges CPU %, RAM %, Disk %, dan daftar Docker aktif).
-- Panel chat real-time dengan kartu visual eksekusi tool (*tool execution card*).
-- Desain modern, dark mode, dan ringan.
 
 ---
 
-## Perintah dalam Chat (Slash Commands)
+## ⌨️ Perintah Interaktif (Slash Commands)
+
+Saat berada di dalam sesi chat, ketik perintah berikut kapan saja:
 
 | Perintah | Fungsi |
-|----------|--------|
-| `/agent` | Toggle mode Autonomous VPS Agent (aktif / nonaktif) |
-| `/model` | Ganti model AI (menampilkan selector) |
-| `/models` | Lihat semua model + ID lengkapnya |
-| `/clear` | Hapus riwayat chat, mulai sesi baru |
-| `/history` | Tampilkan riwayat percakapan saat ini |
-| `/status` | Cek status gateway 9Router dan server agen VPS |
-| `/help` | Tampilkan panduan semua perintah |
+| :--- | :--- |
+| `/agent` | Mengaktifkan / menonaktifkan mode Autonomous Agent |
+| `/model` | Membuka selektor model interaktif |
+| `/model <nama>` | Mencari atau langsung beralih ke model tertentu |
+| `/preview` `[path]` | Menyalakan server preview web lokal di latar belakang |
+| `/update` | Memperbarui PIPS CLI & Agent ke versi terbaru |
+| `/clear` | Membersihkan riwayat chat dan memori agen |
+| `/history` | Menampilkan riwayat percakapan sesi ini |
+| `/status` | Memeriksa status koneksi gateway |
+| `/help` | Menampilkan ringkasan panduan bantuan |
 | `/exit` | Keluar dari aplikasi |
 
 ---
 
-## Menjalankan Agen Server 24/7 di VPS (Systemd)
+## 📄 Lisensi
 
-Untuk memastikan server agen dan Web Dashboard di VPS selalu aktif melayani request dari komputer Anda:
-
-```bash
-# Di server VPS (folder pips-cli):
-sudo bash setup-agent-service.sh
-```
-
-Perintah ini akan:
-1. Mendaftarkan unit systemd `pips-agent.service` (port `20130`).
-2. Mengaktifkan autostart saat server reboot.
-3. Memperbarui reverse proxy Nginx untuk routing `/agent` dan `/api/agent`.
-
----
-
-## Daftar Model AI
-
-| # | Model ID | Nama | Keterangan |
-|---|----------|------|-----------|
-| 1 | `ag/gemini-3.8-flash` | Gemini 3.8 Flash | Default — Coding & General ⚡ |
-| 2 | `ag/gemini-3.8-flash-high` | Gemini 3.8 Flash High | Kualitas lebih tinggi |
-| 3 | `ag/gemini-3.8-flash-low` | Gemini 3.8 Flash Low | Hemat kuota 🪶 |
-| 4 | `ag/claude-sonnet-4-6` | Claude Sonnet 4.6 | Reasoning & Analisis 🧠 |
-| 5 | `ag/claude-opus-4-6-thinking` | Claude Opus Thinking | Deep Reasoning 💡 |
-| 6 | `ag/gemini-pro-agent` | Gemini Pro Agent | Agentic 🤖 |
-| 7 | `ag/gpt-oss-120b-medium` | GPT OSS 120B | Open Source Model |
-| 8 | `ag/gemini-3-flash` | Gemini 3 Flash | Tugas Ringan 🌀 |
-| 9 | `ag/gemini-3-flash-agent` | Gemini 3 Flash Agent | Agent Ringan |
-
----
-
-## Troubleshooting
-
-- **Windows `ModuleNotFoundError: No module named 'readline'`**:
-  Telah diperbaiki dengan mekanisme *safe fallback* — tidak akan crash di Windows.
-- **Teks streaming terpotong atau tercetak dobel**:
-  Telah diperbaiki — streaming token-by-token langsung dicetak tanpa duplikasi panel Markdown.
-- **Akses port agent dari luar**:
-  Bisa diakses langsung lewat IP publik VPS port `20130`, Tailscale (`100.90.156.126:20130`), atau via Cloudflare/Nginx di `https://pips.dvikara.cloud/agent`.
-
----
-
-## License
-
-MIT
+Didistribusikan di bawah lisensi MIT.
