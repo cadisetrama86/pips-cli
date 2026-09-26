@@ -398,30 +398,15 @@ SKULL_BANNER = [
     ("        ◥██▄▄▄▄  ▄█████▄  ▄▄▄▄██◤        ", "#8f001d"),
     ("          ▀██████████████████▀          ", "#6b0016"),
     ("             ║ ██ ║ █ ║ ██ ║             ", "#4d0010"),
-    ("             ╚════╩═══╩════╝             ", "#33000a"),
-]
-
-BOX_BANNER = [
-    (" ✖ ✖ ✖      ◢◤▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀◥◣      ✖ ✖ ✖ ", "#555555"),
-    (" ☠ ☠ ☠      ▌   P I P S   A I   ▐    ☠ ☠ ☠ ", "#ff3344"),
-    (" ✖ ✖ ✖      ◥◣▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄◢◤      ✖ ✖ ✖ ", "#555555"),
 ]
 
 LOGO_BANNER = [
-    ("  ▄███████▄  ▄█  ▄███████▄  ▄████████  ", "#ff4d4d"),
-    (" ███    ███ ███ ███    ███ ███    ███  ", "#ff3344"),
-    (" ███    ███ ███ ███    ███ ███    █▀   ", "#e61937"),
-    (" ████████▀  ███ ████████▀  ████████▄   ", "#cc0029"),
-    (" ███        ███ ███        ▀▀▀▀▀▀███   ", "#b30024"),
-    (" ███        ███ ███        ███    ███  ", "#8f001d"),
-    (" ███        ███ ███        ████████▀   ", "#6b0016"),
+    ("       ▄█████▄ ▄█ ▄█████▄ ▄█████▄       ", "#ff4d4d"),
+    ("       ██ ▄▄██ ██ ██ ▄▄██ ██▄▄▄▄▄       ", "#ff2244"),
+    ("       ██████▀ ██ ██████▀ ▀▀▀▀▀██       ", "#cc0029"),
+    ("       ██      ██ ██      ▄▄▄▄▄██       ", "#990020"),
 ]
 
-BASE_BANNER = [
-    (" ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ", "#88001a"),
-    (" ╲ ╱ ╲ ╱ ╲ ╱ ╲ ╱ ╲ ╱ ╲ ╱ ╲ ╱ ╲ ╱ ╲ ╱ ╲ ╱ ╲ ╱ ", "#cc0029"),
-    ("  ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼  ", "#4d0010"),
-]
 
 def show_main_screen() -> str:
     """Render dark crimson gothic main menu with stylized banner."""
@@ -442,18 +427,11 @@ def show_main_screen() -> str:
         for line, col in SKULL_BANNER:
             lines.append(f"  [{col}]{line}[/{col}]")
         lines.append("")
-        for line, col in BOX_BANNER:
-            lines.append(f"  [{col}]{line}[/{col}]")
-        lines.append("")
         for line, col in LOGO_BANNER:
             lines.append(f"  [{col}]{line}[/{col}]")
         lines.append("")
-        for line, col in BASE_BANNER:
-            lines.append(f"  [{col}]{line}[/{col}]")
-
-        lines.append("")
-        lines.append("  [bold #ff3344]⚡ CRIMSON PROTOCOL[/bold #ff3344] [dim #888888]• Autonomous AI Companion v2.0.0[/dim #888888]")
-        lines.append("[dim #551111]────────────────────────────────────────────────────────────────────────[/dim #551111]")
+        lines.append("       [bold #ff3344][ CRIMSON PROTOCOL :: ONLINE ][/bold #ff3344]")
+        lines.append("  [dim #551111]─────────────────────────────────────────────────[/dim #551111]")
         lines.append("")
         lines.append("  [bold white]Command Selection:[/bold white]")
         lines.append("")
