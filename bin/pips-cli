@@ -63,6 +63,7 @@ load_env()
 # Support ROUTER_BASE_URL or PIPS_BASE_URL
 DEFAULT_ROUTER_URL = "http://127.0.0.1:20128/v1" if os.path.exists("/home/afif-sofi/.9router") else "https://pips.dvikara.cloud/v1"
 ROUTER_BASE_URL = os.environ.get("ROUTER_BASE_URL", os.environ.get("PIPS_BASE_URL", DEFAULT_ROUTER_URL)).rstrip("/")
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 
 # Support ROUTER_API_KEY, PIPS_API_KEY, OPENAI_API_KEY
 ROUTER_API_KEY = os.environ.get("ROUTER_API_KEY", os.environ.get("PIPS_API_KEY", os.environ.get("OPENAI_API_KEY", "sk-ffcd49f104f5ca66-hs6zum-6bae8b1c")))
@@ -169,7 +170,9 @@ class ModelService:
 
         # Determine clean group name
         prefix_lower = prefix.lower()
-        if 'claude' in raw_name.lower():
+        if prefix_lower == 'ollama':
+            group = "Ollama Local"
+        elif 'claude' in raw_name.lower():
             group = "Anthropic / Claude"
         elif 'gemini' in raw_name.lower():
             group = "Google / Gemini"
@@ -253,6 +256,180 @@ class ModelService:
 # Initialize global model service
 model_service = ModelService(ROUTER_BASE_URL, API_KEY)
 current_model_id = DEFAULT_FALLBACK_MODEL
+
+
+# ──────────────────────────────────────────────
+# Token Management & Smart Hybrid Router (Local-First 0-Token & Cloud Fallback)
+# ──────────────────────────────────────────────
+class SmartAutoRouter:
+    def __init__(self, ollama_url: str = OLLAMA_BASE_URL):
+        self.ollama_url = ollama_url
+        self._cached_local_models: list[str] = []
+        self._last_local_check: float = 0
+        self._check_interval: float = 15.0
+
+    def get_local_models(self, force: bool = False) -> list[str]:
+        now = time.time()
+        if self._cached_local_models and not force and (now - self._last_local_check < self._check_interval):
+            return self._cached_local_models
+
+        url = f"{self.ollama_url}/api/tags"
+        req = urllib.request.Request(url, headers={"User-Agent": "pips-cli/2.0"}, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=1.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                models = [m.get("name") or m.get("model") for m in data.get("models", []) if m.get("name") or m.get("model")]
+                sorted_models = []
+                for prio in ("hermes-gemma:4b", "hermes-gemma", "hermes3:3b", "hermes3", "qwen", "llama", "gemma", "mistral"):
+                    for m in models:
+                        if prio in m.lower() and m not in sorted_models:
+                            sorted_models.append(m)
+                for m in models:
+                    if m not in sorted_models:
+                        sorted_models.append(m)
+                self._cached_local_models = sorted_models
+                self._last_local_check = now
+                return self._cached_local_models
+        except Exception:
+            self._last_local_check = now
+            return []
+
+    def is_local_online(self) -> bool:
+        return bool(self.get_local_models())
+
+    def resolve_route(self, messages: list, active_model_id: str) -> tuple[str, bool, str]:
+        """
+        Resolves (effective_model_id, is_local_direct, route_display_badge).
+        - If active_model_id is 'auto': decides whether to route locally (0 tokens) or cloud flash.
+        - If active_model_id is 'ollama/...': routes directly to local Ollama.
+        - Else: routes to 9Router cloud.
+        """
+        mid_lower = (active_model_id or "").lower()
+
+        if mid_lower.startswith("ollama/"):
+            raw_local = active_model_id.split('/', 1)[1]
+            return raw_local, True, "Ollama Local (Direct)"
+
+        if "hermes" in mid_lower and "/" not in active_model_id:
+            return active_model_id, True, "Ollama Local (Direct)"
+
+        if mid_lower == "auto":
+            local_models = self.get_local_models()
+            if local_models:
+                best_local = local_models[0]
+                return best_local, True, "Auto ⚡ Local Ollama (Free • 0 Cloud Tokens)"
+            else:
+                # Cloud free / flash fallback
+                return "ag/gemini-3.8-flash", False, "Auto ⚡ Cloud Flash"
+
+        # Explicit Cloud model
+        lbl, _ = ModelService.format_model_metadata(active_model_id)
+        return active_model_id, False, f"Cloud Gateway ({lbl})"
+
+
+class TokenOptimizer:
+    def __init__(self):
+        self.prompt_tokens_est: int = 0
+        self.completion_tokens_est: int = 0
+        self.saved_tokens_est: int = 0
+        self.local_queries_count: int = 0
+        self.cloud_queries_count: int = 0
+        self.eco_mode: bool = True
+
+    @staticmethod
+    def estimate_tokens(text: str) -> int:
+        """Heuristic calculation: ~4 chars per token."""
+        if not text:
+            return 0
+        return max(1, len(text) // 4)
+
+    @staticmethod
+    def is_local_model(model_id: str) -> bool:
+        mid = (model_id or "").lower()
+        return mid.startswith("ollama/") or "hermes" in mid or "local" in mid or mid == "auto"
+
+    @staticmethod
+    def get_system_prompt(model_id: str, is_local: bool = False) -> str:
+        cwd = os.getcwd()
+        os_name = "Windows" if sys.platform == "win32" else ("macOS" if sys.platform == "darwin" else "Linux")
+        user_name = os.environ.get("USERNAME") or os.environ.get("USER") or "user"
+
+        if is_local or TokenOptimizer.is_local_model(model_id):
+            # Hermes / Local Compact High-Density System Prompt (saves ~200+ tokens per turn)
+            return (
+                f"You are PIPS AI (Local Accelerator Mode).\n"
+                f"CWD: {cwd} ({os_name}, user: {user_name}).\n"
+                f"Rules: Provide direct, accurate answers and exact commands/code with zero unnecessary fluff. If tools or autonomous file changes are needed, suggest /agent."
+            )
+        else:
+            return (
+                f"You are PIPS AI, a helpful AI coding and system assistant powered by 9Router.\n"
+                f"Active environment:\n"
+                f"- Working Directory (CWD): {cwd}\n"
+                f"- Operating System: {os_name} ({sys.platform})\n"
+                f"- Current User: {user_name}\n\n"
+                f"Operational Rules:\n"
+                f"- You are in interactive terminal chat mode. You do NOT have tool execution in this mode. NEVER produce function calls.\n"
+                f"- When asked to check files, list folders, or run commands, provide exact {os_name} terminal commands with clear explanations.\n"
+                f"- Remind the user they can type /agent if they want PIPS to automatically inspect files and execute commands.\n"
+                f"- When referring to 'path ini', 'folder ini', 'disini', or relative paths, mean: {cwd}.\n"
+                f"- Be concise, direct, and practical."
+            )
+
+    def optimize_messages(self, messages: list, model_id: str, is_local: bool = False) -> list:
+        """Prunes historical reasoning, removes token bloat, and applies adaptive sliding window."""
+        if not messages:
+            return []
+
+        local_mode = is_local or self.is_local_model(model_id)
+        max_history_turns = 10 if (local_mode or self.eco_mode) else 24
+
+        # Extract non-system messages
+        chat_msgs = [m for m in messages if m.get("role") != "system"]
+
+        # Ensure active system prompt matches current model & route
+        sys_content = self.get_system_prompt(model_id, local_mode)
+        system_msgs = [{"role": "system", "content": sys_content}]
+
+        # Slide context window
+        if len(chat_msgs) > max_history_turns:
+            dropped_turns = chat_msgs[:-max_history_turns]
+            for d in dropped_turns:
+                self.saved_tokens_est += self.estimate_tokens(d.get("content", ""))
+            chat_msgs = chat_msgs[-max_history_turns:]
+
+        # Clean and compress message content
+        compacted_chat = []
+        for idx, m in enumerate(chat_msgs):
+            role = m.get("role")
+            content = m.get("content", "")
+            orig_len = len(content)
+
+            # Strip reasoning notices or internal monologue from older assistant turns
+            if role == "assistant" and idx < len(chat_msgs) - 1:
+                if "*(Catatan:" in content:
+                    content = content.split("*(Catatan:")[0].strip()
+                # For local/eco mode, truncate older long code dumps to preserve context
+                if (local_mode or self.eco_mode) and len(content) > 1500:
+                    content = content[:1200] + "\n... [truncated older response to save tokens]"
+
+            # Remove excessive consecutive newlines
+            while "\n\n\n" in content:
+                content = content.replace("\n\n\n", "\n\n")
+
+            saved_chars = orig_len - len(content)
+            if saved_chars > 0:
+                self.saved_tokens_est += max(1, saved_chars // 4)
+
+            compacted_chat.append({"role": role, "content": content})
+
+        final_msgs = system_msgs + compacted_chat
+        return final_msgs
+
+
+token_optimizer = TokenOptimizer()
+auto_router = SmartAutoRouter()
+
 
 
 # ──────────────────────────────────────────────
@@ -493,10 +670,50 @@ def print_chat_header(model_id: str, is_agent: bool = False):
 
 
 # ──────────────────────────────────────────────
-# Stream Chat Response (Urllib / SSE)
+# Stream Chat Response (Urllib / SSE / Local Acceleration)
 # ──────────────────────────────────────────────
-def stream_chat(messages: list, model_id: str):
-    """Stream response from 9Router, yields tokens safely."""
+def stream_chat(messages: list, target_model: str, is_local_direct: bool = False):
+    """Stream response from Ollama direct or 9Router, yielding tokens safely with auto-fallback."""
+    if is_local_direct:
+        # Try local direct stream first (0 cloud token overhead, 100% free)
+        url = f"{OLLAMA_BASE_URL}/v1/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+            "User-Agent": "pips-cli/2.0",
+        }
+        payload = json.dumps({
+            "model": target_model,
+            "messages": messages,
+            "stream": True,
+        }).encode("utf-8")
+
+        req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=90) as resp:
+                for raw_line in resp:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line or line == "data: [DONE]":
+                        continue
+                    if line.startswith("data: "):
+                        json_str = line[6:]
+                        try:
+                            chunk = json.loads(json_str)
+                            choices = chunk.get("choices") or []
+                            if choices and len(choices) > 0:
+                                delta = choices[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    yield content
+                        except json.JSONDecodeError:
+                            pass
+            return
+        except Exception:
+            # If local Ollama connection fails or runner crashed, smoothly fallback to cloud gateway
+            target_model = "ag/gemini-3.8-flash"
+            is_local_direct = False
+
+    # Standard 9Router Cloud upstream
     url = f"{ROUTER_BASE_URL}/chat/completions"
     headers = {
         "Content-Type":  "application/json",
@@ -505,7 +722,7 @@ def stream_chat(messages: list, model_id: str):
         "User-Agent":    "pips-cli/2.0",
     }
     payload = json.dumps({
-        "model":    model_id,
+        "model":    target_model,
         "messages": messages,
         "stream":   True,
     }).encode("utf-8")
@@ -568,9 +785,16 @@ class ThinkingIndicator:
 
 
 def render_response(model_id: str, messages: list) -> str:
-    """Stream tokens directly without repeating metadata panel."""
+    """Stream tokens directly with smart hybrid route resolution & token metric tracking."""
+    target_model, is_local_direct, route_badge = auto_router.resolve_route(messages, model_id)
+    active_msgs = token_optimizer.optimize_messages(messages, target_model, is_local=is_local_direct)
+
+    # Calculate input prompt tokens
+    prompt_chars = sum(len(m.get("content", "")) for m in active_msgs)
+    in_tokens = max(1, prompt_chars // 4)
+
     try:
-        gen = stream_chat(messages, model_id)
+        gen = stream_chat(active_msgs, target_model, is_local_direct=is_local_direct)
     except Exception as e:
         console.print(f"\n  [bold red]✗ Error:[/bold red] {e}\n")
         return ""
@@ -579,7 +803,8 @@ def render_response(model_id: str, messages: list) -> str:
     first_chunk = None
     stream_err = None
 
-    with ThinkingIndicator("◓ Reviewing..."):
+    indicator_text = f"◓ [{route_badge}] Reviewing..."
+    with ThinkingIndicator(indicator_text):
         try:
             first_chunk = next(gen)
             full_text.append(first_chunk)
@@ -593,7 +818,7 @@ def render_response(model_id: str, messages: list) -> str:
         return ""
 
     if first_chunk:
-        console.print("  [bold #ff3344]✓ Done[/bold #ff3344]\n")
+        console.print(f"  [bold #ff3344]✓ Done[/bold #ff3344] [dim]({route_badge})[/dim]\n")
         console.print(first_chunk, end="", markup=False, highlight=False)
         sys.stdout.flush()
 
@@ -605,12 +830,23 @@ def render_response(model_id: str, messages: list) -> str:
     except Exception as e:
         console.print(f"\n  [red]✗ Stream interrupted:[/red] {e}")
 
-    if not full_text:
+    ans = "".join(full_text)
+    if not ans:
         console.print("\n  [dim yellow]⚠ Model tidak mengembalikan teks jawaban. Coba kirim ulang, beralih ke `/agent` untuk eksekusi perintah, atau pilih model lain dengan `/models`.[/dim yellow]")
+    else:
+        out_tokens = max(1, len(ans) // 4)
+        if is_local_direct:
+            token_optimizer.local_queries_count += 1
+            # Local computation saves 100% of prompt + completion tokens from cloud billing
+            token_optimizer.saved_tokens_est += (in_tokens + out_tokens)
+        else:
+            token_optimizer.cloud_queries_count += 1
+            token_optimizer.prompt_tokens_est += in_tokens
+            token_optimizer.completion_tokens_est += out_tokens
 
     console.print()
     console.print()
-    return "".join(full_text)
+    return ans
 
 
 # ──────────────────────────────────────────────
@@ -1014,6 +1250,77 @@ def handle_slash(cmd: str, model_id: str, messages: list, is_agent: bool) -> tup
             console.print()
         return model_id, messages, True, is_agent
 
+    elif command in ("/auto", "/smart"):
+        new_id = "auto"
+        print_chat_header(new_id, is_agent)
+        is_local_avail = auto_router.is_local_online()
+        loc_str = "Local Ollama + Cloud Hybrid" if is_local_avail else "Cloud Gateway"
+        console.print(f"  [green]✓[/green] Switched to [bold]Auto (Smart Hybrid Router)[/bold] [bold green]⚡ {loc_str} (Token-Saver Active)[/bold green]\n")
+        return new_id, messages, True, is_agent
+
+    elif command in ("/hermes", "/local"):
+        local_models = auto_router.get_local_models(force=True)
+        if local_models:
+            new_id = f"ollama/{local_models[0]}"
+            name = local_models[0]
+            print_chat_header(new_id, is_agent)
+            console.print(f"  [green]✓[/green] Switched to [bold]{name}[/bold] ([dim]{new_id}[/dim]) [bold green]⚡ Local Direct (0 Cloud Tokens)[/bold green]\n")
+            return new_id, messages, True, is_agent
+        else:
+            model_service.fetch_models()
+            hermes_models = [m for m in model_service.models if "hermes" in m["id"].lower() or m["id"].startswith("ollama/")]
+            if hermes_models:
+                new_id = hermes_models[0]["id"]
+                name = hermes_models[0]["name"]
+                print_chat_header(new_id, is_agent)
+                console.print(f"  [green]✓[/green] Switched to [bold]{name}[/bold] ([dim]{new_id}[/dim]) [bold green]⚡ Local Token-Saver Active[/bold green]\n")
+                return new_id, messages, True, is_agent
+            else:
+                console.print("  [yellow]No local Ollama models found.[/yellow]\n  [dim]Tip: Ensure Ollama is running and run: ollama pull hermes-gemma:4b[/dim]\n")
+                return model_id, messages, True, is_agent
+
+    elif command in ("/tokens", "/stats", "/token"):
+        est_in = token_optimizer.prompt_tokens_est
+        est_out = token_optimizer.completion_tokens_est
+        est_saved = token_optimizer.saved_tokens_est
+        local_q = token_optimizer.local_queries_count
+        cloud_q = token_optimizer.cloud_queries_count
+        eco_status = "[bold green]ENABLED[/bold green]" if token_optimizer.eco_mode else "[yellow]DISABLED[/yellow]"
+
+        lbl, _ = ModelService.format_model_metadata(model_id)
+        if model_id.lower() == "auto":
+            is_local_avail = auto_router.is_local_online()
+            local_name = auto_router.get_local_models()[0] if is_local_avail else "None"
+            tier_info = f"[bold green]Auto Hybrid (Local 0-Token: {local_name})[/bold green]" if is_local_avail else "[cyan]Auto Hybrid (Cloud Flash)[/cyan]"
+        elif token_optimizer.is_local_model(model_id):
+            tier_info = "[bold green]Ollama Local (100% Free • Zero Cloud Tokens)[/bold green]"
+        else:
+            tier_info = "[cyan]Remote Cloud Gateway[/cyan]"
+
+        console.print(Panel(
+            Text.from_markup(
+                f"[bold #ff3344]📊 PIPS Smart Token & Savings Dashboard[/bold #ff3344]\n\n"
+                f"  [dim]Active Model     :[/dim] [bold white]{lbl}[/bold white] ([dim]{model_id}[/dim])\n"
+                f"  [dim]Routing Strategy :[/dim] {tier_info}\n"
+                f"  [dim]Eco Token Saver  :[/dim] {eco_status} [dim](Sliding context & deduplication)[/dim]\n"
+                f"  [dim]Local Queries    :[/dim] [bold green]{local_q} queries (0 Cloud Tokens)[/bold green]\n"
+                f"  [dim]Cloud Queries    :[/dim] [white]{cloud_q} queries[/white]\n"
+                f"  [dim]Cloud In / Out   :[/dim] [dim]~{est_in:,} in / ~{est_out:,} out[/dim]\n"
+                f"  [dim]Tokens Saved     :[/dim] [bold green]~{est_saved:,} tokens (100% Free)[/bold green]\n\n"
+                f"[dim #888888]💡 In 'Auto' mode, simple chats & code snippets run on Local Ollama for 0 cloud tokens.[/dim #888888]"
+            ),
+            border_style="#cc0029",
+            box=box.ROUNDED,
+            padding=(0, 2)
+        ))
+        return model_id, messages, True, is_agent
+
+    elif command == "/eco":
+        token_optimizer.eco_mode = not token_optimizer.eco_mode
+        status = "[bold green]ENABLED[/bold green]" if token_optimizer.eco_mode else "[yellow]DISABLED[/yellow]"
+        console.print(f"  [green]✓[/green] Eco Token-Saver Mode: {status}\n")
+        return model_id, messages, True, is_agent
+
     elif command == "/status":
         console.print()
         try:
@@ -1026,10 +1333,13 @@ def handle_slash(cmd: str, model_id: str, messages: list, is_agent: bool) -> tup
             status_text = "[red]OFFLINE[/red]"
 
         lbl, _ = ModelService.format_model_metadata(model_id)
+        is_local_online = auto_router.is_local_online()
+        local_status = f"[bold green]ONLINE[/bold green] ({auto_router.get_local_models()[0]})" if is_local_online else "[dim]OFFLINE[/dim]"
         console.print(Panel(
             Text.from_markup(
                 f"[bold #ff3344]9Router AI Gateway[/bold #ff3344]: {status_text}\n"
                 f"[dim]Endpoint     :[/dim] [white]{ROUTER_BASE_URL}[/white]\n"
+                f"[dim]Local Ollama :[/dim] {local_status} ([dim]{OLLAMA_BASE_URL}[/dim])\n"
                 f"[dim]Active Model :[/dim] [bold #ff4d4d]{lbl}[/bold #ff4d4d] ([dim]{model_id}[/dim])\n"
                 f"[dim]Cached Models:[/dim] {len(model_service.models)} models available"
             ),
@@ -1073,6 +1383,10 @@ def handle_slash(cmd: str, model_id: str, messages: list, is_agent: bool) -> tup
         console.print(Panel(
             Text.from_markup(
                 "[bold #ff3344]PIPS CLI Commands • Crimson Protocol[/bold #ff3344]\n\n"
+                "  [bold #ff4d4d]/auto[/bold #ff4d4d]           — switch to Auto Smart Hybrid Router (Local-first & 0-token)\n"
+                "  [bold #ff4d4d]/hermes[/bold #ff4d4d]         — quick switch to local Ollama (0 Cloud Cost)\n"
+                "  [bold #ff4d4d]/tokens[/bold #ff4d4d]         — view session token statistics & savings\n"
+                "  [bold #ff4d4d]/eco[/bold #ff4d4d]            — toggle Eco Token-Saver mode (sliding context)\n"
                 "  [bold #ff4d4d]/model[/bold #ff4d4d]          — open interactive model selector\n"
                 "  [bold #ff4d4d]/model <name>[/bold #ff4d4d]   — search or switch model by name\n"
                 "  [bold #ff4d4d]/models[/bold #ff4d4d]         — open model selector\n"
@@ -1082,7 +1396,7 @@ def handle_slash(cmd: str, model_id: str, messages: list, is_agent: bool) -> tup
                 "  [bold #ff4d4d]/update[/bold #ff4d4d]         — check and install latest update\n"
                 "  [bold #ff4d4d]/clear[/bold #ff4d4d]          — clear chat history & agent memory\n"
                 "  [bold #ff4d4d]/history[/bold #ff4d4d]        — view session messages\n"
-                "  [bold #ff4d4d]/status[/bold #ff4d4d]         — check 9Router connectivity\n"
+                "  [bold #ff4d4d]/status[/bold #ff4d4d]         — check 9Router & Ollama connectivity\n"
                 "  [bold #ff4d4d]/help[/bold #ff4d4d]           — show this help\n"
                 "  [bold #ff4d4d]/exit[/bold #ff4d4d]           — quit application\n\n"
                 "[dim #888888]Tip: Press [bold white]Shift+Enter[/bold white], end with [bold white]\\[/bold white], or paste code to write multiline prompts.[/dim #888888]"
@@ -1196,26 +1510,10 @@ def run_chat_session(initial_model_id: str = None, start_agent: bool = False):
 
     print_chat_header(model_id, is_agent)
 
-    cwd = os.getcwd()
-    os_name = "Windows" if sys.platform == "win32" else ("macOS" if sys.platform == "darwin" else "Linux")
-    user_name = os.environ.get("USERNAME") or os.environ.get("USER") or "user"
-
     messages = [
         {
             "role": "system",
-            "content": (
-                f"You are PIPS AI, a helpful AI coding and system assistant powered by 9Router.\n"
-                f"Active environment:\n"
-                f"- Working Directory (CWD): {cwd}\n"
-                f"- Operating System: {os_name} ({sys.platform})\n"
-                f"- Current User: {user_name}\n\n"
-                f"Operational Rules:\n"
-                f"- You are in interactive terminal chat mode. You do NOT have tool execution in this mode. NEVER produce function calls or tool calls.\n"
-                f"- When the user asks to check files, list folders, or run commands (e.g. 'cek ada folder apa aja', 'ls', 'dir'), provide the exact {os_name} terminal commands to run (e.g. PowerShell/CMD commands) with clear explanations.\n"
-                f"- Remind the user they can type /agent if they want PIPS to automatically inspect files and execute commands.\n"
-                f"- When the user refers to 'path ini', 'folder ini', 'disini', or relative paths, they mean: {cwd}.\n"
-                f"- Be concise, direct, and practical."
-            )
+            "content": token_optimizer.get_system_prompt(model_id)
         }
     ]
 
@@ -1246,13 +1544,7 @@ def run_chat_session(initial_model_id: str = None, start_agent: bool = False):
             continue
 
         messages.append({"role": "user", "content": user_input})
-
-        # Token optimization: sliding context window to prevent token explosion
-        active_msgs = messages
-        if len(active_msgs) > 24:
-            active_msgs = [active_msgs[0]] + active_msgs[-23:]
-
-        response = render_response(model_id, active_msgs)
+        response = render_response(model_id, messages)
 
         if response:
             messages.append({"role": "assistant", "content": response})
@@ -1291,6 +1583,7 @@ def main():
             print("\nPIPS CLI — AI Development Companion powered by 9Router.")
             print("\nOptions:")
             print("  chat                      Open interactive chat directly")
+            print("  hermes, --hermes, local   Start chat immediately using Local Hermes (Token-Saver)")
             print("  agent, --agent            Launch directly in Autonomous VPS Agent mode")
             print("  models, --models          Open interactive model selector")
             print("  preview [dir]             Launch local HTTP web preview server")
@@ -1299,6 +1592,7 @@ def main():
             print("\nExamples:")
             print("  pips-cli                  Open main menu")
             print("  pips-cli chat             Start chat immediately")
+            print("  pips-cli hermes           Chat directly with local Hermes (0 cloud tokens)")
             print("  pips-cli agent            Run autonomous agent")
             print("  pips-cli preview          Preview current folder at http://localhost:3000")
             print("  pips-cli update           Self-update to latest release")
@@ -1313,6 +1607,22 @@ def main():
             sys.exit(0)
         elif first in ("chat", "--chat"):
             run_chat_session(current_model_id)
+            sys.exit(0)
+        elif first in ("hermes", "--hermes", "local", "--local", "-l"):
+            hermes_models = [m for m in model_service.models if "hermes" in m["id"].lower()]
+            if not hermes_models:
+                hermes_models = [m for m in model_service.models if m["id"].startswith("ollama/")]
+            chosen_local = hermes_models[0]["id"] if hermes_models else current_model_id
+
+            prompt = " ".join(args[1:]) if len(args) > 1 else None
+            if prompt:
+                msgs = [
+                    {"role": "system", "content": token_optimizer.get_system_prompt(chosen_local)},
+                    {"role": "user", "content": prompt}
+                ]
+                render_response(chosen_local, msgs)
+            else:
+                run_chat_session(chosen_local)
             sys.exit(0)
         elif first in ("agent", "--agent", "-a"):
             prompt = " ".join(args[1:]) if len(args) > 1 else None
@@ -1330,16 +1640,8 @@ def main():
         else:
             # One-shot query mode
             one_shot_prompt = " ".join(args)
-            cwd = os.getcwd()
-            os_name = "Windows" if sys.platform == "win32" else "Linux"
             msgs = [
-                {
-                    "role": "system",
-                    "content": (
-                        f"You are PIPS AI. Active CWD: {cwd} on {os_name}. "
-                        f"You are in terminal mode without tool execution; provide direct explanations and exact commands."
-                    )
-                },
+                {"role": "system", "content": token_optimizer.get_system_prompt(current_model_id)},
                 {"role": "user", "content": one_shot_prompt}
             ]
             render_response(current_model_id, msgs)
