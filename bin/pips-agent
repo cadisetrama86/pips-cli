@@ -1282,16 +1282,16 @@ def run_cli(prompt: str = None):
     if HAS_RICH:
         console.print(Panel(
             Text.from_markup(
-                f"[bold cyan]PIPS Autonomous VPS Agent[/bold cyan]\n"
-                f"[dim]Model :[/dim] [green]{agent.model_id}[/green]\n"
+                f"[bold #ff3344]💀 PIPS Autonomous VPS Agent[/bold #ff3344] [dim #888888]• Crimson Protocol[/dim #888888]\n"
+                f"[dim]Model :[/dim] [bold white]{agent.model_id}[/bold white]\n"
                 f"[dim]Target:[/dim] [white]Local VPS ({socket.gethostname()})[/white]\n"
-                f"[dim]Tools :[/dim] [blue]bash_run, vps_status, docker_action, file_read/write/edit[/blue]"
+                f"[dim]Tools :[/dim] [dim #ff6b81]bash_run, vps_status, docker_action, file_ops, preview_server[/dim #ff6b81]"
             ),
-            border_style="cyan",
+            border_style="#cc0029",
             padding=(0, 2)
         ))
     else:
-        print(f"=== PIPS Autonomous VPS Agent ({agent.model_id}) ===")
+        print(f"=== 💀 PIPS Autonomous VPS Agent ({agent.model_id}) ===")
 
     def cli_event_cb(ev_type, data):
         if HAS_RICH:
@@ -1299,24 +1299,27 @@ def run_cli(prompt: str = None):
                 thought_text = data.get("thought", "").strip()
                 first_line = thought_text.splitlines()[0] if thought_text else ""
                 snippet = first_line[:120] + ("..." if len(first_line) > 120 else "")
-                console.print(f"  [cyan]◓ Reviewing...[/cyan] [dim]{snippet}[/dim]")
+                console.print(f"  [bold #ff4d4d]◓ Reviewing...[/bold #ff4d4d] [dim]{snippet}[/dim]")
             elif ev_type == "tool_call":
                 name = data.get("name", "")
                 args = data.get("arguments", {})
                 if name == "file_list":
                     target = args.get("path", ".")
-                    console.print(f"  [blue]⌕ Searching...[/blue] [white]{target}[/white]")
+                    console.print(f"  [#ff4757]⌕ Searching...[/#ff4757] [white]{target}[/white]")
                 elif name == "file_read":
                     target = args.get("path", "")
-                    console.print(f"  [magenta]📖 Reading...[/magenta] [white]{target}[/white]")
+                    console.print(f"  [#ff6b81]📖 Reading...[/#ff6b81] [white]{target}[/white]")
                 elif name in ("file_edit", "file_write"):
                     target = args.get("path", "")
                     content_len = len(args.get("content", ""))
                     size_hint = f" [dim]({content_len:,} chars)[/dim]" if content_len else ""
-                    console.print(f"  [yellow]✎ Editing...[/yellow] [white]{target}[/white]{size_hint}")
+                    console.print(f"  [#ff9f43]✎ Editing...[/#ff9f43] [white]{target}[/white]{size_hint}")
+                elif name == "preview_server":
+                    target = args.get("directory", ".")
+                    console.print(f"  [bold #ff3344]🌐 Preview Server...[/bold #ff3344] [white]{target}[/white]")
                 else:
                     cmd_info = args.get("command") or args.get("action") or json.dumps(args)
-                    console.print(f"  [bold cyan]⚙ Running tool...[/bold cyan] [bold yellow]{name}[/bold yellow] [dim]({cmd_info})[/dim]")
+                    console.print(f"  [bold #ff3344]⚙ Running tool...[/bold #ff3344] [bold #ffa502]{name}[/bold #ffa502] [dim]({cmd_info})[/dim]")
             elif ev_type == "tool_result":
                 res = data.get("result", {})
                 if res.get("ok"):
@@ -1353,7 +1356,7 @@ def run_cli(prompt: str = None):
                     console.print(f"  [bold red]✗ Failed:[/bold red] [yellow]{err}[/yellow]")
             elif ev_type == "final_answer":
                 console.print()
-                console.print(Rule(style="cyan"))
+                console.print(Rule(style="#cc0029"))
                 console.print()
                 console.print(Markdown(data.get("content", "")))
                 console.print()
@@ -1386,7 +1389,7 @@ def run_cli(prompt: str = None):
 
     while True:
         try:
-            user_in = input("\n[pips-agent] ❯ ").strip()
+            user_in = input("\n[🔥 pips-agent] ❯ ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nExiting agent.")
             break

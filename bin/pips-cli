@@ -319,27 +319,27 @@ def interactive_select_model(active_id: str, search_initial: str = "") -> str:
         # Render Selector Panel
         lines = []
         if query:
-            lines.append(f"  [bold]Search:[/bold] [cyan]{query}[/cyan][blink]_[/blink]\n")
+            lines.append(f"  [bold #ff3344]Search:[/bold #ff3344] [white]{query}[/white][blink]_[/blink]\n")
         else:
-            lines.append(f"  [dim]Type to search • Press / to filter[/dim]\n")
+            lines.append(f"  [dim #888888]Type to search • Press / to filter[/dim #888888]\n")
 
         if not filtered:
-            lines.append("  [dim italic]No matching models found[/dim italic]\n")
+            lines.append("  [dim italic #888888]No matching models found[/dim italic #888888]\n")
         else:
             for idx_offset, m in enumerate(visible_items):
                 actual_idx = start_idx + idx_offset
                 is_selected = (actual_idx == selected_idx)
                 is_active = (m["id"] == active_id)
 
-                indicator = "[bold cyan]❯[/bold cyan]" if is_selected else " "
-                active_mark = "[bold green]● [/bold green]" if is_active else ""
+                indicator = "[bold #ff3344]◈[/bold #ff3344]" if is_selected else " "
+                active_mark = "[bold #ff4d4d]● [/bold #ff4d4d]" if is_active else ""
 
                 if is_selected:
-                    lines.append(f"  {indicator} {active_mark}[bold white]{m['name']}[/bold white]  [dim]({m['group']})[/dim]")
-                    lines.append(f"      [cyan]{m['id']}[/cyan]")
+                    lines.append(f"  {indicator} {active_mark}[bold white]{m['name']}[/bold white]  [dim #ff6b81]({m['group']})[/dim #ff6b81]")
+                    lines.append(f"      [#ff3344]{m['id']}[/#ff3344]")
                 else:
-                    lines.append(f"  {indicator} {active_mark}[dim]{m['name']}[/dim]  [dim]({m['group']})[/dim]")
-                    lines.append(f"      [dim]{m['id']}[/dim]")
+                    lines.append(f"  {indicator} {active_mark}[dim #888888]{m['name']}[/dim #888888]  [dim #555555]({m['group']})[/dim #555555]")
+                    lines.append(f"      [dim #666666]{m['id']}[/dim #666666]")
                 lines.append("")
 
         panel_content = Text.from_markup("\n".join(lines).rstrip())
@@ -347,13 +347,13 @@ def interactive_select_model(active_id: str, search_initial: str = "") -> str:
         console.clear()
         console.print(Panel(
             panel_content,
-            title="[bold cyan]SELECT MODEL[/bold cyan]",
+            title="[bold #ff3344]◈ SELECT MODEL[/bold #ff3344]",
             title_align="left",
-            border_style="cyan",
+            border_style="#cc0029",
             box=box.ROUNDED,
             padding=(1, 2)
         ))
-        console.print("  [dim]↑↓ Navigate   Enter Select   / Search   Esc Back[/dim]")
+        console.print("  [dim #777777]↑↓ Navigate   Enter Select   / Search   Esc Back[/dim #777777]")
 
         # Handle Keypress
         try:
@@ -387,18 +387,41 @@ def interactive_select_model(active_id: str, search_initial: str = "") -> str:
 
 
 # ──────────────────────────────────────────────
-# Main Screen (Rule 6)
+# Main Screen (Crimson Theme)
 # ──────────────────────────────────────────────
-PIPS_ASCII = """\
- ██████╗ ██╗██████╗ ███████╗
- ██╔══██╗██║██╔══██╗██╔════╝
- ██████╔╝██║██████╔╝███████╗
- ██╔═══╝ ██║██╔═══╝ ╚════██║
- ██║     ██║██║     ███████║
- ╚═╝     ╚═╝╚═╝     ╚══════╝"""
+SKULL_BANNER = [
+    ("        ╱████████████████████╲        ", "#ff4d4d"),
+    ("  ╱████      🔥      🔥      ████╲    ", "#ff3344"),
+    (" ╱████████████████████████████████╲   ", "#e61937"),
+    ("╱██████████████████████████████████╲  ", "#cc0029"),
+    ("       ╲████████████████████╱         ", "#b30024"),
+    ("             ╲████████╱               ", "#8f001d"),
+    ("                ╲██╱                  ", "#6b0016"),
+]
+
+BOX_BANNER = [
+    ("† † †        ╔══════════════════╗        † † †", "#666666"),
+    ("CRIMSON      ║     PIPS  AI     ║       SHADOW", "#ff3344"),
+    ("† † †        ╚══════════════════╝        † † †", "#666666"),
+]
+
+LOGO_BANNER = [
+    ("     ██████╗ ██╗██████╗ ███████╗      ", "#ff4d4d"),
+    ("     ██╔══██╗██║██╔══██╗██╔════╝      ", "#ff3344"),
+    ("     ██████╔╝██║██████╔╝███████╗      ", "#e61937"),
+    ("     ██╔═══╝ ██║██╔═══╝ ╚════██║      ", "#cc0029"),
+    ("     ██║     ██║██║     ███████║      ", "#b30024"),
+    ("     ╚═╝     ╚═╝╚═╝     ╚══════╝      ", "#8f001d"),
+]
+
+BASE_BANNER = [
+    ("  †         †         †         †         †   ", "#555555"),
+    (" /|\\       /|\\       /|\\       /|\\       /|\\  ", "#cc0029"),
+    ("/_|_\\     /_|_\\     /_|_\\     /_|_\\     /_|_\\ ", "#88001a"),
+]
 
 def show_main_screen() -> str:
-    """Render clean, minimal main menu without redundant model spam."""
+    """Render dark crimson gothic main menu with stylized banner."""
     menu_items = [
         ("chat",     "Chat",     "Interactive AI chat"),
         ("models",   "Models",   "Discover & switch AI model"),
@@ -412,27 +435,31 @@ def show_main_screen() -> str:
     selected_idx = 0
 
     while True:
-        ascii_lines = PIPS_ASCII.strip("\n").splitlines()
-        ascii_colored = "\n".join(f"  [bold cyan]{line}[/bold cyan]" for line in ascii_lines)
+        lines = [""]
+        for line, col in SKULL_BANNER:
+            lines.append(f"  [{col}]{line}[/{col}]")
+        lines.append("")
+        for line, col in BOX_BANNER:
+            lines.append(f"  [{col}]{line}[/{col}]")
+        lines.append("")
+        for line, col in LOGO_BANNER:
+            lines.append(f"  [{col}]{line}[/{col}]")
+        lines.append("")
+        for line, col in BASE_BANNER:
+            lines.append(f"  [{col}]{line}[/{col}]")
 
-        lines = [
-            "",
-            ascii_colored,
-            "",
-            "  [dim]AI Development Companion                         v2.0.0[/dim]",
-            "",
-            "[dim]──────────────────────────────────────────────────────────────────────[/dim]",
-            "",
-            "  [bold white]What would you like to do?[/bold white]",
-            ""
-        ]
+        lines.append("")
+        lines.append("  [bold #ff3344]⚡ CRIMSON PROTOCOL[/bold #ff3344] [dim #888888]• Autonomous AI Companion v2.0.0[/dim #888888]")
+        lines.append("[dim #551111]────────────────────────────────────────────────────────────────────────[/dim #551111]")
+        lines.append("")
+        lines.append("  [bold white]Command Selection:[/bold white]")
+        lines.append("")
 
         for i, (key, label, desc) in enumerate(menu_items):
-            indicator = "[bold cyan]❯[/bold cyan]" if i == selected_idx else " "
             if i == selected_idx:
-                lines.append(f"  {indicator} [bold white]{label}[/bold white]  [dim]— {desc}[/dim]")
+                lines.append(f"  [bold #ff2244]◈ {label}[/bold #ff2244]  [dim #cccccc]— {desc}[/dim #cccccc]")
             else:
-                lines.append(f"  {indicator} [dim]{label}[/dim]")
+                lines.append(f"    [dim #888888]{label}[/dim #888888]")
 
         lines.append("")
         content = Text.from_markup("\n".join(lines))
@@ -440,11 +467,11 @@ def show_main_screen() -> str:
         console.clear()
         console.print(Panel(
             content,
-            border_style="cyan",
+            border_style="#cc0029",
             box=box.ROUNDED,
             padding=(0, 2)
         ))
-        console.print("  [dim]↑↓ Navigate   Enter Select   Ctrl+C Exit[/dim]")
+        console.print("  [dim #777777]↑↓ Navigate   Enter Select   Ctrl+C Exit[/dim #777777]")
 
         try:
             key = read_single_key()
@@ -465,17 +492,17 @@ def show_main_screen() -> str:
 # Chat Header (Rule 7)
 # ──────────────────────────────────────────────
 def print_chat_header(model_id: str, is_agent: bool = False):
-    """Prints a minimal, clean one-line header."""
+    """Prints a minimal, clean one-line header in dark crimson theme."""
     label, _ = ModelService.format_model_metadata(model_id)
-    mode_text = " [bold magenta]• AGENT[/bold magenta]" if is_agent else ""
+    mode_text = " [bold #ff4d4d]• 💀 AGENT[/bold #ff4d4d]" if is_agent else " [bold #ff4d4d]• CRIMSON[/bold #ff4d4d]"
 
     console.clear()
     header_title = f" PIPS CLI{mode_text} ─── {label} "
     console.print(Panel(
         "",
-        title=f"[cyan]{header_title}[/cyan]",
+        title=f"[bold #ff3344]{header_title}[/bold #ff3344]",
         title_align="center",
-        border_style="cyan" if not is_agent else "magenta",
+        border_style="#cc0029",
         box=box.ROUNDED,
         height=3
     ))
@@ -546,7 +573,7 @@ class ThinkingIndicator:
         self._live = None
 
     def __enter__(self):
-        spinner = Spinner("dots", text=Text.from_markup(f" [cyan]{self.text}[/cyan]"))
+        spinner = Spinner("dots", text=Text.from_markup(f" [bold #ff4d4d]{self.text}[/bold #ff4d4d]"), style="#ff3344")
         self._live = Live(spinner, console=console, refresh_per_second=10, transient=True)
         self._live.start()
         return self
@@ -561,7 +588,7 @@ def render_response(model_id: str, messages: list) -> str:
     try:
         gen = stream_chat(messages, model_id)
     except Exception as e:
-        console.print(f"\n  [red]✗ Error:[/red] {e}\n")
+        console.print(f"\n  [bold red]✗ Error:[/bold red] {e}\n")
         return ""
 
     full_text = []
@@ -578,11 +605,11 @@ def render_response(model_id: str, messages: list) -> str:
             stream_err = str(e)
 
     if stream_err:
-        console.print(f"\n  [red]✗ Error:[/red] {stream_err}\n")
+        console.print(f"\n  [bold red]✗ Error:[/bold red] {stream_err}\n")
         return ""
 
     if first_chunk:
-        console.print("  [bold green]✓ Done[/bold green]\n")
+        console.print("  [bold #ff3344]✓ Done[/bold #ff3344]\n")
         console.print(first_chunk, end="", markup=False, highlight=False)
         sys.stdout.flush()
 
@@ -659,7 +686,7 @@ def run_agent_turn(prompt: str):
     payload = json.dumps({"prompt": prompt}).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
 
-    console.print(f"\n  [bold magenta]🤖 Connecting to VPS Agent at {PIPS_AGENT_URL}...[/bold magenta]\n")
+    console.print(f"\n  [bold #ff3344]💀 Connecting to VPS Agent at {PIPS_AGENT_URL}...[/bold #ff3344]\n")
 
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
@@ -674,24 +701,24 @@ def run_agent_turn(prompt: str):
                             thought_text = data.get("thought", "").strip()
                             first_line = thought_text.splitlines()[0] if thought_text else ""
                             snippet = first_line[:120] + ("..." if len(first_line) > 120 else "")
-                            console.print(f"  [cyan]◓ Reviewing...[/cyan] [dim]{snippet}[/dim]")
+                            console.print(f"  [bold #ff4d4d]◓ Reviewing...[/bold #ff4d4d] [dim]{snippet}[/dim]")
                         elif ev_type == "tool_call":
                             name = data.get("name", "")
                             args = data.get("arguments", {})
                             if name == "file_list":
                                 target = args.get("path", ".")
-                                console.print(f"  [blue]⌕ Searching...[/blue] [white]{target}[/white]")
+                                console.print(f"  [#ff4757]⌕ Searching...[/#ff4757] [white]{target}[/white]")
                             elif name == "file_read":
                                 target = args.get("path", "")
-                                console.print(f"  [magenta]📖 Reading...[/magenta] [white]{target}[/white]")
+                                console.print(f"  [#ff6b81]📖 Reading...[/#ff6b81] [white]{target}[/white]")
                             elif name in ("file_edit", "file_write"):
                                 target = args.get("path", "")
                                 content_len = len(args.get("content", ""))
                                 size_hint = f" [dim]({content_len:,} chars)[/dim]" if content_len else ""
-                                console.print(f"  [yellow]✎ Editing...[/yellow] [white]{target}[/white]{size_hint}")
+                                console.print(f"  [#ff9f43]✎ Editing...[/#ff9f43] [white]{target}[/white]{size_hint}")
                             else:
                                 cmd_info = args.get("command") or args.get("action") or json.dumps(args)
-                                console.print(f"  [bold cyan]⚙ Running tool...[/bold cyan] [bold yellow]{name}[/bold yellow] [dim]({cmd_info})[/dim]")
+                                console.print(f"  [bold #ff3344]⚙ Running tool...[/bold #ff3344] [bold #ffa502]{name}[/bold #ffa502] [dim]({cmd_info})[/dim]")
                         elif ev_type == "tool_result":
                             res = data.get("result", {})
                             if res.get("ok"):
@@ -715,7 +742,7 @@ def run_agent_turn(prompt: str):
                                 console.print(f"  [bold red]✗ Failed:[/bold red] [yellow]{err}[/yellow]")
                         elif ev_type == "final_answer":
                             console.print()
-                            console.print(Rule(style="cyan"))
+                            console.print(Rule(style="#cc0029"))
                             console.print()
                             console.print(Markdown(data.get("content", "")))
                             console.print()
@@ -765,12 +792,12 @@ def run_preview(directory: str = ".", port: int = 3000, background: bool = False
         t.start()
         console.print(Panel(
             Text.from_markup(
-                f"[bold green]Local Preview Server Started[/bold green]\n\n"
-                f"[dim]URL      :[/dim] [bold cyan]{url}[/bold cyan]\n"
-                f"[dim]Directory:[/dim] [yellow]{abs_path}[/yellow]\n"
+                f"[bold #ff3344]Local Preview Server Started[/bold #ff3344]\n\n"
+                f"[dim]URL      :[/dim] [bold #ff4d4d]{url}[/bold #ff4d4d]\n"
+                f"[dim]Directory:[/dim] [white]{abs_path}[/white]\n"
                 f"[dim]Mode     :[/dim] Background Daemon"
             ),
-            border_style="green",
+            border_style="#cc0029",
             box=box.ROUNDED,
             padding=(0, 2)
         ))
@@ -778,12 +805,12 @@ def run_preview(directory: str = ".", port: int = 3000, background: bool = False
     else:
         console.print(Panel(
             Text.from_markup(
-                f"[bold green]Local Preview Server[/bold green]\n\n"
-                f"[dim]URL      :[/dim] [bold cyan]{url}[/bold cyan]\n"
-                f"[dim]Directory:[/dim] [yellow]{abs_path}[/yellow]\n\n"
-                f"[dim]Press [bold red]Ctrl+C[/bold red] to stop server...[/dim]"
+                f"[bold #ff3344]Local Preview Server[/bold #ff3344]\n\n"
+                f"[dim]URL      :[/dim] [bold #ff4d4d]{url}[/bold #ff4d4d]\n"
+                f"[dim]Directory:[/dim] [white]{abs_path}[/white]\n\n"
+                f"[dim #888888]Press [bold red]Ctrl+C[/bold red] to stop server...[/dim #888888]"
             ),
-            border_style="green",
+            border_style="#cc0029",
             box=box.ROUNDED,
             padding=(0, 2)
         ))
@@ -802,10 +829,10 @@ def run_self_update() -> bool:
     console.print()
     console.print(Panel(
         Text.from_markup(
-            "[bold cyan]PIPS Self-Updater[/bold cyan]\n"
-            "[dim]Checking remote repository for latest releases...[/dim]"
+            "[bold #ff3344]💀 PIPS Self-Updater[/bold #ff3344]\n"
+            "[dim #888888]Checking remote repository for latest releases...[/dim #888888]"
         ),
-        border_style="cyan",
+        border_style="#cc0029",
         box=box.ROUNDED,
         padding=(0, 2)
     ))
@@ -997,9 +1024,9 @@ def handle_slash(cmd: str, model_id: str, messages: list, is_agent: bool) -> tup
                 content = m.get("content", "")
                 snippet = content[:150] + "..." if len(content) > 150 else content
                 if role == "user":
-                    console.print(f"  [bold cyan]You >[/bold cyan] {snippet}")
+                    console.print(f"  [bold #ff4d4d]🩸 you >[/bold #ff4d4d] {snippet}")
                 elif role == "assistant":
-                    console.print(f"  [bold green]AI  >[/bold green] {snippet}")
+                    console.print(f"  [bold #ff3344]💀 pips >[/bold #ff3344] {snippet}")
             console.print()
         return model_id, messages, True, is_agent
 
@@ -1017,12 +1044,12 @@ def handle_slash(cmd: str, model_id: str, messages: list, is_agent: bool) -> tup
         lbl, _ = ModelService.format_model_metadata(model_id)
         console.print(Panel(
             Text.from_markup(
-                f"[bold cyan]9Router AI Gateway[/bold cyan]: {status_text}\n"
-                f"[dim]Endpoint     :[/dim] {ROUTER_BASE_URL}\n"
-                f"[dim]Active Model :[/dim] [green]{lbl}[/green] ([dim]{model_id}[/dim])\n"
+                f"[bold #ff3344]9Router AI Gateway[/bold #ff3344]: {status_text}\n"
+                f"[dim]Endpoint     :[/dim] [white]{ROUTER_BASE_URL}[/white]\n"
+                f"[dim]Active Model :[/dim] [bold #ff4d4d]{lbl}[/bold #ff4d4d] ([dim]{model_id}[/dim])\n"
                 f"[dim]Cached Models:[/dim] {len(model_service.models)} models available"
             ),
-            border_style="cyan",
+            border_style="#cc0029",
             box=box.ROUNDED,
             padding=(0, 2)
         ))
@@ -1032,20 +1059,20 @@ def handle_slash(cmd: str, model_id: str, messages: list, is_agent: bool) -> tup
     elif command == "/help":
         console.print(Panel(
             Text.from_markup(
-                "[bold]PIPS CLI Commands[/bold]\n\n"
-                "  [cyan]/model[/cyan]          — open interactive model selector\n"
-                "  [cyan]/model <name>[/cyan]   — search or switch model by name\n"
-                "  [cyan]/models[/cyan]         — open model selector\n"
-                "  [cyan]/agent[/cyan]          — toggle Autonomous VPS Agent Mode\n"
-                "  [cyan]/preview[/cyan] [path]  — launch local web preview server\n"
-                "  [cyan]/update[/cyan]         — check and install latest update\n"
-                "  [cyan]/clear[/cyan]          — clear chat history & agent memory\n"
-                "  [cyan]/history[/cyan]        — view session messages\n"
-                "  [cyan]/status[/cyan]         — check 9Router connectivity\n"
-                "  [cyan]/help[/cyan]           — show this help\n"
-                "  [cyan]/exit[/cyan]           — quit application"
+                "[bold #ff3344]PIPS CLI Commands • Crimson Protocol[/bold #ff3344]\n\n"
+                "  [bold #ff4d4d]/model[/bold #ff4d4d]          — open interactive model selector\n"
+                "  [bold #ff4d4d]/model <name>[/bold #ff4d4d]   — search or switch model by name\n"
+                "  [bold #ff4d4d]/models[/bold #ff4d4d]         — open model selector\n"
+                "  [bold #ff4d4d]/agent[/bold #ff4d4d]          — toggle Autonomous VPS Agent Mode\n"
+                "  [bold #ff4d4d]/preview[/bold #ff4d4d] [path]  — launch local web preview server\n"
+                "  [bold #ff4d4d]/update[/bold #ff4d4d]         — check and install latest update\n"
+                "  [bold #ff4d4d]/clear[/bold #ff4d4d]          — clear chat history & agent memory\n"
+                "  [bold #ff4d4d]/history[/bold #ff4d4d]        — view session messages\n"
+                "  [bold #ff4d4d]/status[/bold #ff4d4d]         — check 9Router connectivity\n"
+                "  [bold #ff4d4d]/help[/bold #ff4d4d]           — show this help\n"
+                "  [bold #ff4d4d]/exit[/bold #ff4d4d]           — quit application"
             ),
-            border_style="cyan",
+            border_style="#cc0029",
             box=box.ROUNDED,
             padding=(0, 2)
         ))
@@ -1090,7 +1117,7 @@ def run_chat_session(initial_model_id: str = None, start_agent: bool = False):
     ]
 
     while True:
-        prompt_sym = "🤖 agent > " if is_agent else "You > "
+        prompt_sym = "🔥 agent > " if is_agent else "🩸 you > "
         try:
             user_input = input(prompt_sym)
         except (EOFError, KeyboardInterrupt):
@@ -1238,32 +1265,32 @@ def main():
             read_single_key()
         elif action == "history":
             console.clear()
-            console.print(Panel("[bold]Recent Input History[/bold]", border_style="cyan"))
+            console.print(Panel("[bold #ff3344]Recent Input History • Crimson Core[/bold #ff3344]", border_style="#cc0029"))
             if os.path.exists(HISTORY_FILE):
                 with open(HISTORY_FILE, "r", encoding="utf-8", errors="replace") as f:
                     hist_lines = [l.strip() for l in f.readlines() if l.strip()][-15:]
                 for h in hist_lines:
-                    console.print(f"  [dim]•[/dim] {h}")
+                    console.print(f"  [dim #ff4d4d]•[/dim #ff4d4d] [white]{h}[/white]")
             else:
-                console.print("  [dim]No history file yet.[/dim]")
-            console.print("\n[dim]Press Enter to return to main menu...[/dim]")
+                console.print("  [dim #888888]No history file yet.[/dim #888888]")
+            console.print("\n[dim #777777]Press Enter to return to main menu...[/dim #777777]")
             read_single_key()
         elif action == "settings":
             console.clear()
             console.print(Panel(
                 Text.from_markup(
-                    f"[bold]PIPS CLI Configuration[/bold]\n\n"
-                    f"[dim]9Router Gateway :[/dim] [cyan]{ROUTER_BASE_URL}[/cyan]\n"
-                    f"[dim]Agent Service   :[/dim] [cyan]{PIPS_AGENT_URL}[/cyan]\n"
-                    f"[dim]Active Model    :[/dim] [green]{current_model_id}[/green]\n"
-                    f"[dim]API Key         :[/dim] {API_KEY[:8]}...{API_KEY[-4:] if len(API_KEY)>12 else ''}\n"
-                    f"[dim]Working Dir     :[/dim] [yellow]{os.getcwd()}[/yellow]"
+                    f"[bold #ff3344]PIPS CLI Configuration • Crimson Core[/bold #ff3344]\n\n"
+                    f"[dim #888888]9Router Gateway :[/dim #888888] [white]{ROUTER_BASE_URL}[/white]\n"
+                    f"[dim #888888]Agent Service   :[/dim #888888] [white]{PIPS_AGENT_URL}[/white]\n"
+                    f"[dim #888888]Active Model    :[/dim #888888] [bold #ff4d4d]{current_model_id}[/bold #ff4d4d]\n"
+                    f"[dim #888888]API Key         :[/dim #888888] [dim]{API_KEY[:8]}...{API_KEY[-4:] if len(API_KEY)>12 else ''}[/dim]\n"
+                    f"[dim #888888]Working Dir     :[/dim #888888] [white]{os.getcwd()}[/white]"
                 ),
-                border_style="cyan",
+                border_style="#cc0029",
                 box=box.ROUNDED,
                 padding=(1, 2)
             ))
-            console.print("[dim]Press Enter to return to main menu...[/dim]")
+            console.print("[dim #777777]Press Enter to return to main menu...[/dim #777777]")
             read_single_key()
         elif action == "exit":
             console.print("\n[dim]Goodbye![/dim]\n")
