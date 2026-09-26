@@ -502,7 +502,7 @@ class PIPSAgent:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
 
-        with urllib.request.urlopen(req, timeout=90) as resp:
+        with urllib.request.urlopen(req, timeout=240) as resp:
             body = resp.read().decode("utf-8")
             return json.loads(body)
 
@@ -524,8 +524,19 @@ class PIPSAgent:
 
         while step < max_steps:
             step += 1
+            if event_callback:
+                event_callback("working", {"step": step})
+
             try:
-                resp = self.call_api(messages)
+                if HAS_RICH and console:
+                    with console.status(
+                        f"  [cyan]◓ Reviewing & Generating...[/cyan] [dim](Step {step}: AI is working, please wait)[/dim]",
+                        spinner="dots"
+                    ):
+                        resp = self.call_api(messages)
+                else:
+                    print(f"  ◓ Reviewing & Generating... (Step {step}: AI is working, please wait)")
+                    resp = self.call_api(messages)
             except Exception as e:
                 err_msg = f"API Error: {e}"
                 if event_callback:
@@ -1163,16 +1174,30 @@ def run_cli(prompt: str = None):
                     console.print(f"  [magenta]📖 Reading...[/magenta] [white]{target}[/white]")
                 elif name in ("file_edit", "file_write"):
                     target = args.get("path", "")
-                    console.print(f"  [yellow]✎ Editing...[/yellow] [white]{target}[/white]")
+                    content_len = len(args.get("content", ""))
+                    size_hint = f" [dim]({content_len:,} chars)[/dim]" if content_len else ""
+                    console.print(f"  [yellow]✎ Editing...[/yellow] [white]{target}[/white]{size_hint}")
                 else:
                     cmd_info = args.get("command") or args.get("action") or json.dumps(args)
                     console.print(f"  [bold cyan]⚙ Running tool...[/bold cyan] [bold yellow]{name}[/bold yellow] [dim]({cmd_info})[/dim]")
             elif ev_type == "tool_result":
                 res = data.get("result", {})
                 if res.get("ok"):
-                    out = res.get("stdout") or str(res)
-                    snippet = out.strip().replace("\n", " ")[:150] + ("..." if len(out.strip()) > 150 else "")
-                    console.print(f"  [bold green]✓ Done[/bold green] [dim]{snippet}[/dim]")
+                    name = data.get("name", "")
+                    if name == "file_list":
+                        summary = f"[dim]found {res.get('total', len(res.get('items', [])))} items[/dim]"
+                    elif name == "file_write":
+                        summary = f"[dim]saved {res.get('bytes_written', 0):,} bytes[/dim]"
+                    elif name == "file_read":
+                        summary = f"[dim]read {res.get('total_read', 0)} lines[/dim]"
+                    elif name == "file_edit":
+                        summary = "[dim]updated content[/dim]"
+                    elif name == "bash_run":
+                        summary = f"[dim]exit {res.get('exit_code', 0)} in {res.get('duration_seconds', 0)}s[/dim]"
+                    else:
+                        out = res.get("stdout") or str(res)
+                        summary = "[dim]" + out.strip().replace("\n", " ")[:100] + "[/dim]"
+                    console.print(f"  [bold green]✓ Done[/bold green] {summary}")
                 else:
                     err = res.get("error", "action failed")
                     console.print(f"  [bold red]✗ Failed:[/bold red] [yellow]{err}[/yellow]")
