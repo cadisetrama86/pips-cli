@@ -1274,6 +1274,85 @@ def start_server(port: int = AGENT_PORT):
 
 
 # ──────────────────────────────────────────────
+# Multiline & Shift+Enter Input Handler
+# ──────────────────────────────────────────────
+def is_modifier_held() -> bool:
+    """Check if Shift, Alt, or Ctrl key was held down on Windows."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            u32 = ctypes.windll.user32
+            shift_pressed = (u32.GetAsyncKeyState(0x10) & 0x8000) != 0
+            alt_pressed = (u32.GetAsyncKeyState(0x12) & 0x8000) != 0
+            return shift_pressed or alt_pressed
+        except Exception:
+            return False
+    return False
+
+
+def has_buffered_input() -> bool:
+    """Check if more pasted input is currently queued in stdin."""
+    if sys.platform == "win32":
+        try:
+            import msvcrt
+            return msvcrt.kbhit() != 0
+        except Exception:
+            return False
+    else:
+        try:
+            import select
+            r, _, _ = select.select([sys.stdin], [], [], 0.02)
+            return bool(r)
+        except Exception:
+            return False
+
+
+def has_unclosed_quotes(text: str) -> bool:
+    """Check if text has unclosed triple quotes or markdown fence."""
+    for q in ('"""', "'''", "```"):
+        if text.count(q) % 2 != 0:
+            return True
+    return False
+
+
+def read_user_input(prompt_sym: str) -> str:
+    """Read user input with Shift+Enter, line continuation, and paste support."""
+    lines = []
+    continuation_prompt = "   ...   "
+
+    while True:
+        curr_prompt = prompt_sym if not lines else continuation_prompt
+        try:
+            line = input(curr_prompt)
+        except EOFError:
+            if lines:
+                break
+            raise
+
+        shift_held = is_modifier_held()
+        pasted_more = has_buffered_input()
+
+        has_backslash = line.rstrip().endswith("\\")
+        if has_backslash:
+            line = line.rstrip()[:-1]
+
+        lines.append(line)
+        current_full = "\n".join(lines)
+
+        should_continue = (
+            shift_held or
+            has_backslash or
+            has_unclosed_quotes(current_full) or
+            pasted_more
+        )
+
+        if not should_continue:
+            break
+
+    return "\n".join(lines)
+
+
+# ──────────────────────────────────────────────
 # Interactive CLI Mode
 # ──────────────────────────────────────────────
 def run_cli(prompt: str = None):
@@ -1389,7 +1468,7 @@ def run_cli(prompt: str = None):
 
     while True:
         try:
-            user_in = input("\n[🔥 pips-agent] ❯ ").strip()
+            user_in = read_user_input("\n[🔥 pips-agent] ❯ ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nExiting agent.")
             break
@@ -1397,6 +1476,30 @@ def run_cli(prompt: str = None):
             continue
         if user_in in ("/exit", "/quit", "exit", "quit"):
             break
+        if user_in in ("/paste", "/multiline"):
+            if HAS_RICH:
+                console.print(Panel(
+                    Text.from_markup(
+                        "[bold #ff3344]📝 Multiline / Paste Mode[/bold #ff3344]\n"
+                        "[dim #888888]Type or paste your prompt. Type [bold white]EOF[/bold white] or press [bold white]Enter[/bold white] on an empty line when done.[/dim #888888]"
+                    ),
+                    border_style="#cc0029",
+                    padding=(0, 2)
+                ))
+            else:
+                print("📝 Multiline / Paste Mode (type EOF or press Enter on empty line to finish):")
+            p_lines = []
+            while True:
+                try:
+                    sub = input("  ... ")
+                except (EOFError, KeyboardInterrupt):
+                    break
+                if sub.strip() == "EOF" or (not sub and p_lines):
+                    break
+                p_lines.append(sub)
+            user_in = "\n".join(p_lines).strip()
+            if not user_in:
+                continue
 
         _, history = agent.run(user_in, history=history, event_callback=cli_event_cb)
 

@@ -1059,6 +1059,35 @@ def handle_slash(cmd: str, model_id: str, messages: list, is_agent: bool) -> tup
         console.print()
         return model_id, messages, True, is_agent
 
+    elif command in ("/paste", "/multiline"):
+        console.print(Panel(
+            Text.from_markup(
+                "[bold #ff3344]📝 Multiline / Paste Mode[/bold #ff3344]\n"
+                "[dim #888888]Type or paste your multiline prompt. Type [bold white]EOF[/bold white] or press [bold white]Enter[/bold white] on an empty line when done.[/dim #888888]"
+            ),
+            border_style="#cc0029",
+            padding=(0, 2)
+        ))
+        p_lines = []
+        while True:
+            try:
+                pl = input("  ... > ")
+                if pl.strip() == "EOF" or (not pl and p_lines):
+                    break
+                p_lines.append(pl)
+            except (EOFError, KeyboardInterrupt):
+                break
+        p_text = "\n".join(p_lines).strip()
+        if p_text:
+            if is_agent:
+                run_agent_turn(p_text)
+            else:
+                messages.append({"role": "user", "content": p_text})
+                response = render_response(model_id, messages)
+                if response:
+                    messages.append({"role": "assistant", "content": response})
+        return model_id, messages, True, is_agent
+
     elif command == "/help":
         console.print(Panel(
             Text.from_markup(
@@ -1067,13 +1096,15 @@ def handle_slash(cmd: str, model_id: str, messages: list, is_agent: bool) -> tup
                 "  [bold #ff4d4d]/model <name>[/bold #ff4d4d]   — search or switch model by name\n"
                 "  [bold #ff4d4d]/models[/bold #ff4d4d]         — open model selector\n"
                 "  [bold #ff4d4d]/agent[/bold #ff4d4d]          — toggle Autonomous VPS Agent Mode\n"
+                "  [bold #ff4d4d]/paste[/bold #ff4d4d]          — open multiline / paste mode\n"
                 "  [bold #ff4d4d]/preview[/bold #ff4d4d] [path]  — launch local web preview server\n"
                 "  [bold #ff4d4d]/update[/bold #ff4d4d]         — check and install latest update\n"
                 "  [bold #ff4d4d]/clear[/bold #ff4d4d]          — clear chat history & agent memory\n"
                 "  [bold #ff4d4d]/history[/bold #ff4d4d]        — view session messages\n"
                 "  [bold #ff4d4d]/status[/bold #ff4d4d]         — check 9Router connectivity\n"
                 "  [bold #ff4d4d]/help[/bold #ff4d4d]           — show this help\n"
-                "  [bold #ff4d4d]/exit[/bold #ff4d4d]           — quit application"
+                "  [bold #ff4d4d]/exit[/bold #ff4d4d]           — quit application\n\n"
+                "[dim #888888]Tip: Press [bold white]Shift+Enter[/bold white], end with [bold white]\\[/bold white], or paste code to write multiline prompts.[/dim #888888]"
             ),
             border_style="#cc0029",
             box=box.ROUNDED,
@@ -1084,6 +1115,94 @@ def handle_slash(cmd: str, model_id: str, messages: list, is_agent: bool) -> tup
     else:
         console.print(f"  [yellow]Unknown command:[/yellow] {command}  (type [bold]/help[/bold])\n")
         return model_id, messages, True, is_agent
+
+
+# ──────────────────────────────────────────────
+# Multiline & Shift+Enter Input Handler
+# ──────────────────────────────────────────────
+def is_modifier_held() -> bool:
+    """Check if Shift, Alt, or Ctrl key is currently held down on Windows."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            u32 = ctypes.windll.user32
+            # 0x10 = VK_SHIFT, 0x12 = VK_MENU (Alt)
+            shift_pressed = (u32.GetAsyncKeyState(0x10) & 0x8000) != 0
+            alt_pressed = (u32.GetAsyncKeyState(0x12) & 0x8000) != 0
+            return shift_pressed or alt_pressed
+        except Exception:
+            return False
+    return False
+
+
+def has_buffered_input() -> bool:
+    """Check if more pasted input is currently queued in stdin."""
+    if sys.platform == "win32":
+        try:
+            import msvcrt
+            return msvcrt.kbhit() != 0
+        except Exception:
+            return False
+    else:
+        try:
+            import select
+            r, _, _ = select.select([sys.stdin], [], [], 0.02)
+            return bool(r)
+        except Exception:
+            return False
+
+
+def has_unclosed_quotes(text: str) -> bool:
+    """Check if text has unclosed triple quotes or markdown fence."""
+    for q in ('"""', "'''", "```"):
+        if text.count(q) % 2 != 0:
+            return True
+    return False
+
+
+def read_user_input(prompt_sym: str) -> str:
+    """
+    Read user input with automatic multiline support:
+    - Shift+Enter or Alt+Enter inserts a newline.
+    - Trailing backslash (\\) continues to next line.
+    - Unclosed triple quotes (``` or \"\"\") continues to next line.
+    - Pasting multi-line text automatically captures all lines together.
+    """
+    lines = []
+    continuation_prompt = "   ...   "
+
+    while True:
+        curr_prompt = prompt_sym if not lines else continuation_prompt
+        try:
+            line = input(curr_prompt)
+        except EOFError:
+            if lines:
+                break
+            raise
+
+        # Check modifier keys and paste buffer immediately upon Enter
+        shift_held = is_modifier_held()
+        pasted_more = has_buffered_input()
+
+        # Check for trailing backslash line continuation
+        has_backslash = line.rstrip().endswith("\\")
+        if has_backslash:
+            line = line.rstrip()[:-1]
+
+        lines.append(line)
+        current_full = "\n".join(lines)
+
+        should_continue = (
+            shift_held or
+            has_backslash or
+            has_unclosed_quotes(current_full) or
+            pasted_more
+        )
+
+        if not should_continue:
+            break
+
+    return "\n".join(lines)
 
 
 # ──────────────────────────────────────────────
@@ -1122,7 +1241,7 @@ def run_chat_session(initial_model_id: str = None, start_agent: bool = False):
     while True:
         prompt_sym = "🔥 agent > " if is_agent else "🩸 you > "
         try:
-            user_input = input(prompt_sym)
+            user_input = read_user_input(prompt_sym)
         except (EOFError, KeyboardInterrupt):
             console.print("\n  [dim]Exiting chat session.[/dim]\n")
             break
