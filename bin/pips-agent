@@ -1148,19 +1148,34 @@ def run_cli(prompt: str = None):
     def cli_event_cb(ev_type, data):
         if HAS_RICH:
             if ev_type == "thought":
-                console.print(f"\n[dim italic]💭 Thinking: {data.get('thought', '').strip()}[/dim italic]")
+                thought_text = data.get("thought", "").strip()
+                first_line = thought_text.splitlines()[0] if thought_text else ""
+                snippet = first_line[:120] + ("..." if len(first_line) > 120 else "")
+                console.print(f"  [cyan]◓ Reviewing...[/cyan] [dim]{snippet}[/dim]")
             elif ev_type == "tool_call":
                 name = data.get("name", "")
                 args = data.get("arguments", {})
-                console.print(f"\n  [bold cyan]⚙ Tool Calling:[/bold cyan] [bold yellow]{name}[/bold yellow] {json.dumps(args)}")
+                if name == "file_list":
+                    target = args.get("path", ".")
+                    console.print(f"  [blue]⌕ Searching...[/blue] [white]{target}[/white]")
+                elif name == "file_read":
+                    target = args.get("path", "")
+                    console.print(f"  [magenta]📖 Reading...[/magenta] [white]{target}[/white]")
+                elif name in ("file_edit", "file_write"):
+                    target = args.get("path", "")
+                    console.print(f"  [yellow]✎ Editing...[/yellow] [white]{target}[/white]")
+                else:
+                    cmd_info = args.get("command") or args.get("action") or json.dumps(args)
+                    console.print(f"  [bold cyan]⚙ Running tool...[/bold cyan] [bold yellow]{name}[/bold yellow] [dim]({cmd_info})[/dim]")
             elif ev_type == "tool_result":
                 res = data.get("result", {})
                 if res.get("ok"):
                     out = res.get("stdout") or str(res)
-                    snippet = out.strip()[:300] + ("..." if len(out) > 300 else "")
-                    console.print(f"  [bold green]✓ Output:[/bold green] [dim]{snippet}[/dim]")
+                    snippet = out.strip().replace("\n", " ")[:150] + ("..." if len(out.strip()) > 150 else "")
+                    console.print(f"  [bold green]✓ Done[/bold green] [dim]{snippet}[/dim]")
                 else:
-                    console.print(f"  [bold red]✗ Tool Error:[/bold red] {res.get('error', 'failed')}")
+                    err = res.get("error", "action failed")
+                    console.print(f"  [bold red]✗ Failed:[/bold red] [yellow]{err}[/yellow]")
             elif ev_type == "final_answer":
                 console.print()
                 console.print(Rule(style="cyan"))
@@ -1168,10 +1183,24 @@ def run_cli(prompt: str = None):
                 console.print(Markdown(data.get("content", "")))
                 console.print()
         else:
-            if ev_type == "tool_call":
-                print(f"[Tool Call] {data.get('name')}: {data.get('arguments')}")
+            if ev_type == "thought":
+                print("  ◓ Reviewing...")
+            elif ev_type == "tool_call":
+                name = data.get("name", "")
+                args = data.get("arguments", {})
+                if name == "file_list":
+                    print(f"  ⌕ Searching... {args.get('path', '.')}")
+                elif name == "file_read":
+                    print(f"  📖 Reading... {args.get('path', '')}")
+                elif name in ("file_edit", "file_write"):
+                    print(f"  ✎ Editing... {args.get('path', '')}")
+                else:
+                    print(f"  ⚙ Running tool... {name}")
             elif ev_type == "tool_result":
-                print(f"[Tool Result] ok={data.get('result', {}).get('ok')}")
+                if data.get("result", {}).get("ok"):
+                    print("  ✓ Done")
+                else:
+                    print(f"  ✗ Failed: {data.get('result', {}).get('error')}")
             elif ev_type == "final_answer":
                 print(f"\n[Agent Answer]:\n{data.get('content')}\n")
 

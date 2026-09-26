@@ -539,11 +539,12 @@ def stream_chat(messages: list, model_id: str):
 
 
 class ThinkingIndicator:
-    def __init__(self):
+    def __init__(self, text: str = "◓ Reviewing..."):
+        self.text = text
         self._live = None
 
     def __enter__(self):
-        spinner = Spinner("dots", text=Text.from_markup(" [dim]Thinking...[/dim]"))
+        spinner = Spinner("dots", text=Text.from_markup(f" [cyan]{self.text}[/cyan]"))
         self._live = Live(spinner, console=console, refresh_per_second=10, transient=True)
         self._live.start()
         return self
@@ -565,7 +566,7 @@ def render_response(model_id: str, messages: list) -> str:
     first_chunk = None
     stream_err = None
 
-    with ThinkingIndicator():
+    with ThinkingIndicator("◓ Reviewing..."):
         try:
             first_chunk = next(gen)
             full_text.append(first_chunk)
@@ -578,8 +579,8 @@ def render_response(model_id: str, messages: list) -> str:
         console.print(f"\n  [red]✗ Error:[/red] {stream_err}\n")
         return ""
 
-    console.print()
     if first_chunk:
+        console.print("  [bold green]✓ Done[/bold green]\n")
         console.print(first_chunk, end="", markup=False, highlight=False)
         sys.stdout.flush()
 
@@ -666,18 +667,36 @@ def run_agent_turn(prompt: str):
                     try:
                         ev = json.loads(line[6:])
                         ev_type = ev.get("type")
-                        data = data = ev.get("data", {})
+                        data = ev.get("data", {})
                         if ev_type == "thought":
-                            console.print(f"  [dim italic]💭 Thinking: {data.get('thought', '').strip()}[/dim italic]")
+                            thought_text = data.get("thought", "").strip()
+                            first_line = thought_text.splitlines()[0] if thought_text else ""
+                            snippet = first_line[:120] + ("..." if len(first_line) > 120 else "")
+                            console.print(f"  [cyan]◓ Reviewing...[/cyan] [dim]{snippet}[/dim]")
                         elif ev_type == "tool_call":
                             name = data.get("name", "")
-                            args = json.dumps(data.get("arguments", {}))
-                            console.print(f"\n  [bold cyan]⚙ VPS Executing:[/bold cyan] [bold yellow]{name}[/bold yellow] {args}")
+                            args = data.get("arguments", {})
+                            if name == "file_list":
+                                target = args.get("path", ".")
+                                console.print(f"  [blue]⌕ Searching...[/blue] [white]{target}[/white]")
+                            elif name == "file_read":
+                                target = args.get("path", "")
+                                console.print(f"  [magenta]📖 Reading...[/magenta] [white]{target}[/white]")
+                            elif name in ("file_edit", "file_write"):
+                                target = args.get("path", "")
+                                console.print(f"  [yellow]✎ Editing...[/yellow] [white]{target}[/white]")
+                            else:
+                                cmd_info = args.get("command") or args.get("action") or json.dumps(args)
+                                console.print(f"  [bold cyan]⚙ Running tool...[/bold cyan] [bold yellow]{name}[/bold yellow] [dim]({cmd_info})[/dim]")
                         elif ev_type == "tool_result":
                             res = data.get("result", {})
-                            out = res.get("stdout") or str(res)
-                            snippet = out.strip()[:250] + ("..." if len(out) > 250 else "")
-                            console.print(f"  [bold green]✓ Result:[/bold green] [dim]{snippet}[/dim]")
+                            if res.get("ok"):
+                                out = res.get("stdout") or str(res)
+                                snippet = out.strip().replace("\n", " ")[:150] + ("..." if len(out.strip()) > 150 else "")
+                                console.print(f"  [bold green]✓ Done[/bold green] [dim]{snippet}[/dim]")
+                            else:
+                                err = res.get("error", "action failed")
+                                console.print(f"  [bold red]✗ Failed:[/bold red] [yellow]{err}[/yellow]")
                         elif ev_type == "final_answer":
                             console.print()
                             console.print(Rule(style="cyan"))
