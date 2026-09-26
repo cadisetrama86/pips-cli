@@ -918,7 +918,7 @@ def render_response(model_id: str, messages: list) -> str:
 # ──────────────────────────────────────────────
 # Agent Client Execution (Local & Remote)
 # ──────────────────────────────────────────────
-def run_agent_turn(prompt: str):
+def run_agent_turn(prompt: str, model_id: str = "auto"):
     """Execute turn using Agent (locally on current working directory or via remote daemon)."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
     local_agent_path = None
@@ -956,10 +956,8 @@ def run_agent_turn(prompt: str):
 
     if local_agent_path:
         import subprocess
-        if local_agent_path.endswith(".py"):
-            subprocess.run([sys.executable, local_agent_path, prompt], cwd=os.getcwd())
-        else:
-            subprocess.run([local_agent_path, prompt], cwd=os.getcwd())
+        agent_cmd = [sys.executable, local_agent_path, "--model", model_id, prompt] if local_agent_path.endswith(".py") else [local_agent_path, "--model", model_id, prompt]
+        subprocess.run(agent_cmd, cwd=os.getcwd())
         return
 
     # Fallback to Remote Agent Server
@@ -969,7 +967,7 @@ def run_agent_turn(prompt: str):
         "Authorization": f"Bearer {API_KEY}",
         "User-Agent": "pips-cli-agent/2.0"
     }
-    payload = json.dumps({"prompt": prompt}).encode("utf-8")
+    payload = json.dumps({"prompt": prompt, "model": model_id}).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
 
     console.print(f"\n  [bold #ff3344]💀 Connecting to VPS Agent at {PIPS_AGENT_URL}...[/bold #ff3344]\n")
@@ -1437,7 +1435,7 @@ def handle_slash(cmd: str, model_id: str, messages: list, is_agent: bool) -> tup
         p_text = "\n".join(p_lines).strip()
         if p_text:
             if is_agent:
-                run_agent_turn(p_text)
+                run_agent_turn(p_text, model_id=model_id)
             else:
                 messages.append({"role": "user", "content": p_text})
                 response = render_response(model_id, messages)
@@ -1606,7 +1604,7 @@ def run_chat_session(initial_model_id: str = None, start_agent: bool = False):
             continue
 
         if is_agent:
-            run_agent_turn(user_input)
+            run_agent_turn(user_input, model_id=model_id)
             continue
 
         messages.append({"role": "user", "content": user_input})
@@ -1693,7 +1691,7 @@ def main():
         elif first in ("agent", "--agent", "-a"):
             prompt = " ".join(args[1:]) if len(args) > 1 else None
             if prompt:
-                run_agent_turn(prompt)
+                run_agent_turn(prompt, model_id=current_model_id)
             else:
                 run_chat_session(current_model_id, start_agent=True)
             sys.exit(0)

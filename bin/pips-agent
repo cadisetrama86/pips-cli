@@ -7,6 +7,7 @@ Provides CLI mode, Server daemon, and Web Dashboard.
 
 import os
 import sys
+import re
 import json
 import time
 import shutil
@@ -503,30 +504,81 @@ TOOL_DEFINITIONS = [
 # ──────────────────────────────────────────────
 class PIPSAgent:
     def __init__(self, model_id: str = AGENT_MODEL, base_url: str = PIPS_BASE_URL, api_key: str = PIPS_API_KEY):
-        self.model_id = model_id
+        # Auto-detect local Ollama models if model_id is 'auto' or unspecified
+        if not model_id or model_id.lower() == "auto":
+            try:
+                for test_url in ("http://127.0.0.1:11434/api/tags", "http://localhost:11434/api/tags"):
+                    try:
+                        test_req = urllib.request.Request(test_url, headers={"User-Agent": "pips-agent/2.0"})
+                        with urllib.request.urlopen(test_req, timeout=1.2) as r:
+                            tags = json.loads(r.read().decode("utf-8"))
+                            avail = [m.get("name") for m in tags.get("models", [])]
+                            for cand in ("hermes-gemma:4b", "hermes3:3b"):
+                                if cand in avail:
+                                    model_id = f"ollama/{cand}"
+                                    break
+                            if not model_id or model_id.lower() == "auto":
+                                if avail:
+                                    model_id = f"ollama/{avail[0]}"
+                            if model_id and model_id.lower() != "auto":
+                                break
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        self.model_id = model_id or AGENT_MODEL
         self.base_url = base_url
         self.api_key = api_key
+
+        self.is_local = "ollama" in self.model_id.lower() or "hermes" in self.model_id.lower()
+        clean_model = self.model_id.replace("ollama/", "")
 
         cwd = os.getcwd()
         os_platform = "Windows" if sys.platform == "win32" else ("macOS" if sys.platform == "darwin" else "Linux")
         username = os.environ.get("USERNAME") or os.environ.get("USER") or "user"
 
-        self.system_prompt = (
-            f"You are PIPS Agent, an autonomous AI system and coding engineer.\n"
-            f"Active runtime environment:\n"
-            f"- Working Directory (CWD): {cwd}\n"
-            f"- Operating System: {os_platform} ({sys.platform})\n"
-            f"- User: {username}\n\n"
-            f"Guidelines:\n"
-            f"1. When the user refers to 'path ini', 'folder ini', 'disini', or current working directory, they mean: {cwd}.\n"
-            f"2. You have tools to execute shell commands, manage files, and inspect directory contents directly on this machine.\n"
-            f"3. When asked to inspect, list files, trace, or check the current path, use your tools (like file_list or bash_run) immediately in {cwd}.\n"
-            f"4. For shell commands, use syntax matching {os_platform} (e.g. dir/Get-ChildItem on Windows, ls on Linux/macOS).\n"
-            f"5. Be proactive: run commands or read files to gather facts before answering.\n"
-            f"6. Task Completion Priority: When asked to build a website, web page, or code project, ALWAYS create the primary HTML, CSS, and JS files FIRST using file_write before attempting optional asset downloads or secondary scripts. Never stop until the actual HTML and CSS files are completely written.\n"
-            f"7. Use file_write to write files directly. Avoid writing multi-line inline scripts in bash_run if file_write can create the file directly.\n"
-            f"8. When you finish building a web project, you can launch preview_server to let the user immediately preview it in their browser."
-        )
+        if self.is_local:
+            self.system_prompt = (
+                f"You are PIPS Agent, an autonomous AI system and coding engineer running locally via Ollama ({clean_model}).\n"
+                f"Active runtime environment:\n"
+                f"- Working Directory (CWD): {cwd}\n"
+                f"- Operating System: {os_platform} ({sys.platform})\n"
+                f"- User: {username}\n\n"
+                f"You have access to the following tools to inspect, read, edit files and run commands:\n"
+                f"- file_list(path: string): List files and directories in path (e.g. path='.')\n"
+                f"- file_read(path: string, start_line: int, max_lines: int): Read lines from a file\n"
+                f"- file_write(path: string, content: string, overwrite: bool): Create or write a file with content\n"
+                f"- file_edit(path: string, old_content: string, new_content: string): Replace exact text block in a file\n"
+                f"- bash_run(command: string): Execute a command in {os_platform} terminal\n"
+                f"- vps_status(): Get system diagnostics\n"
+                f"- docker_action(action: string, container: string): Docker management\n"
+                f"- preview_server(directory: string, port: int): Start web preview server\n\n"
+                f"Operational Rules:\n"
+                f"1. To invoke a tool, output XML tags:\n"
+                f"<tool_call>\n"
+                f"{{\"name\": \"tool_name\", \"arguments\": {{\"param\": \"value\"}}}}\n"
+                f"</tool_call>\n"
+                f"2. When the tool executes, the system returns <tool_response>. Analyze the output and proceed.\n"
+                f"3. When you have gathered all necessary information or completed the task, output your final answer directly without <tool_call> tags."
+            )
+        else:
+            self.system_prompt = (
+                f"You are PIPS Agent, an autonomous AI system and coding engineer.\n"
+                f"Active runtime environment:\n"
+                f"- Working Directory (CWD): {cwd}\n"
+                f"- Operating System: {os_platform} ({sys.platform})\n"
+                f"- User: {username}\n\n"
+                f"Guidelines:\n"
+                f"1. When the user refers to 'path ini', 'folder ini', 'disini', or current working directory, they mean: {cwd}.\n"
+                f"2. You have tools to execute shell commands, manage files, and inspect directory contents directly on this machine.\n"
+                f"3. When asked to inspect, list files, trace, or check the current path, use your tools (like file_list or bash_run) immediately in {cwd}.\n"
+                f"4. For shell commands, use syntax matching {os_platform} (e.g. dir/Get-ChildItem on Windows, ls on Linux/macOS).\n"
+                f"5. Be proactive: run commands or read files to gather facts before answering.\n"
+                f"6. Task Completion Priority: When asked to build a website, web page, or code project, ALWAYS create the primary HTML, CSS, and JS files FIRST using file_write before attempting optional asset downloads or secondary scripts. Never stop until the actual HTML and CSS files are completely written.\n"
+                f"7. Use file_write to write files directly. Avoid writing multi-line inline scripts in bash_run if file_write can create the file directly.\n"
+                f"8. When you finish building a web project, you can launch preview_server to let the user immediately preview it in their browser."
+            )
 
     def dispatch_tool(self, name: str, args: dict) -> dict:
         """Route tool call to appropriate python function."""
@@ -553,12 +605,98 @@ class PIPSAgent:
             return {"ok": False, "error": str(e)}
 
     def call_api(self, messages: list) -> dict:
-        """Call 9Router / OpenAI chat completions API."""
+        """Call Ollama direct / 9Router API."""
+        clean_local = self.model_id.replace("ollama/", "") if self.model_id.startswith("ollama/") else self.model_id
+
+        if self.is_local:
+            # 1. Try local Ollama direct endpoint (0 Cloud Tokens)
+            ollama_endpoints = ["http://127.0.0.1:11434/v1/chat/completions", "http://localhost:11434/v1/chat/completions"]
+            payload = {
+                "model": clean_local,
+                "messages": messages,
+                "stream": False,
+            }
+            data = json.dumps(payload).encode("utf-8")
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": "pips-agent/2.0",
+            }
+            raw_body = None
+            for ep in ollama_endpoints:
+                try:
+                    req = urllib.request.Request(ep, data=data, headers=headers, method="POST")
+                    with urllib.request.urlopen(req, timeout=180) as resp:
+                        raw_body = resp.read().decode("utf-8")
+                        break
+                except Exception:
+                    pass
+
+            if not raw_body:
+                # 2. Try 9Router local bridge
+                url = f"{self.base_url}/chat/completions"
+                headers_9r = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.api_key}",
+                    "User-Agent": "pips-agent/2.0",
+                }
+                payload_9r = {
+                    "model": f"ollama/{clean_local}",
+                    "messages": messages,
+                    "stream": False,
+                }
+                data_9r = json.dumps(payload_9r).encode("utf-8")
+                try:
+                    req = urllib.request.Request(url, data=data_9r, headers=headers_9r, method="POST")
+                    with urllib.request.urlopen(req, timeout=180) as resp:
+                        raw_body = resp.read().decode("utf-8")
+                except Exception as e:
+                    raise RuntimeError(f"Failed to connect to Ollama and 9Router: {e}")
+
+            res_json = json.loads(raw_body)
+            # Parse XML/Prompt-based tool calls from local model output
+            choices = res_json.get("choices", [])
+            if choices:
+                msg = choices[0].get("message", {})
+                content = msg.get("content", "") or ""
+
+                tool_calls = []
+                tc_matches = re.findall(r'<tool_call>(.*?)</tool_call>', content, re.DOTALL)
+                if not tc_matches:
+                    tc_matches = re.findall(r'```tool_call\s*(.*?)\s*```', content, re.DOTALL)
+
+                for idx, raw_tc in enumerate(tc_matches):
+                    raw_tc = raw_tc.strip()
+                    try:
+                        parsed = json.loads(raw_tc)
+                        if isinstance(parsed, dict) and "name" in parsed:
+                            fn_name = parsed["name"]
+                            fn_args = parsed.get("arguments", {})
+                            tool_calls.append({
+                                "id": f"call_loc_{idx}_{int(time.time()*1000)}",
+                                "type": "function",
+                                "function": {
+                                    "name": fn_name,
+                                    "arguments": json.dumps(fn_args) if isinstance(fn_args, dict) else str(fn_args)
+                                }
+                            })
+                    except json.JSONDecodeError:
+                        pass
+
+                if tool_calls:
+                    # Strip <tool_call>...</tool_call> from content
+                    clean_content = re.sub(r'<tool_call>.*?</tool_call>', '', content, flags=re.DOTALL)
+                    clean_content = re.sub(r'```tool_call.*?```', '', clean_content, flags=re.DOTALL).strip()
+                    msg["tool_calls"] = tool_calls
+                    msg["content"] = clean_content
+
+            return res_json
+
+        # Cloud model with native OpenAI tools
         url = f"{self.base_url}/chat/completions"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
-            "User-Agent": "pips-agent/1.0",
+            "User-Agent": "pips-agent/2.0",
         }
         payload = {
             "model": self.model_id,
@@ -719,11 +857,18 @@ class PIPSAgent:
                 res_str = json.dumps(result, ensure_ascii=False)
                 if len(res_str) > 3000:
                     res_str = res_str[:1800] + "\n... [content truncated to save tokens] ...\n" + res_str[-800:]
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "content": res_str
-                })
+
+                if self.is_local:
+                    messages.append({
+                        "role": "user",
+                        "content": f"<tool_response>\n{res_str}\n</tool_response>"
+                    })
+                else:
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": res_str
+                    })
 
         if not final_answer:
             final_answer = "⚠ Selesai hingga batas langkah eksekusi (35 steps). Semua file dan aset yang telah dibuat tersimpan aman. Ketik instruksi lanjutan untuk melanjutkan jika masih ada yang diperlukan."
@@ -1358,14 +1503,16 @@ def read_user_input(prompt_sym: str) -> str:
 # ──────────────────────────────────────────────
 # Interactive CLI Mode
 # ──────────────────────────────────────────────
-def run_cli(prompt: str = None):
-    agent = PIPSAgent()
+def run_cli(prompt: str = None, model_id: str = None):
+    agent = PIPSAgent(model_id=model_id or AGENT_MODEL)
+
+    model_display = f"{agent.model_id} (Ollama Local • 0 Cloud Tokens)" if agent.is_local else agent.model_id
 
     if HAS_RICH:
         console.print(Panel(
             Text.from_markup(
                 f"[bold #ff3344]💀 PIPS Autonomous VPS Agent[/bold #ff3344] [dim #888888]• Crimson Protocol[/dim #888888]\n"
-                f"[dim]Model :[/dim] [bold white]{agent.model_id}[/bold white]\n"
+                f"[dim]Model :[/dim] [bold white]{model_display}[/bold white]\n"
                 f"[dim]Target:[/dim] [white]Local VPS ({socket.gethostname()})[/white]\n"
                 f"[dim]Tools :[/dim] [dim #ff6b81]bash_run, vps_status, docker_action, file_ops, preview_server[/dim #ff6b81]"
             ),
@@ -1373,7 +1520,7 @@ def run_cli(prompt: str = None):
             padding=(0, 2)
         ))
     else:
-        print(f"=== 💀 PIPS Autonomous VPS Agent ({agent.model_id}) ===")
+        print(f"=== 💀 PIPS Autonomous VPS Agent ({model_display}) ===")
 
     def cli_event_cb(ev_type, data):
         if HAS_RICH:
@@ -1511,21 +1658,36 @@ def run_cli(prompt: str = None):
 # Main Entry Point
 # ──────────────────────────────────────────────
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        arg = sys.argv[1].lower()
-        if arg in ("serve", "--serve", "server", "-s"):
-            port = int(sys.argv[2]) if len(sys.argv) > 2 else AGENT_PORT
+    model_override = None
+    args = []
+    i = 1
+    while i < len(sys.argv):
+        a = sys.argv[i]
+        if a in ("-m", "--model") and i + 1 < len(sys.argv):
+            model_override = sys.argv[i + 1]
+            i += 2
+        elif a.startswith("--model="):
+            model_override = a.split("=", 1)[1]
+            i += 1
+        else:
+            args.append(a)
+            i += 1
+
+    if args:
+        first = args[0].lower()
+        if first in ("serve", "--serve", "server", "-s"):
+            port = int(args[1]) if len(args) > 1 else AGENT_PORT
             start_server(port)
             sys.exit(0)
-        elif arg in ("--help", "-h"):
+        elif first in ("--help", "-h"):
             print("Usage:")
-            print("  pips-agent                    # Interactive CLI agent mode")
-            print("  pips-agent 'task prompt'      # Run single agent task")
-            print("  pips-agent serve [port]       # Start Agent Server & Web Dashboard")
+            print("  pips-agent [-m MODEL]               # Interactive CLI agent mode")
+            print("  pips-agent [-m MODEL] 'task prompt' # Run single agent task")
+            print("  pips-agent serve [port]             # Start Agent Server & Web Dashboard")
             sys.exit(0)
         else:
             # Single prompt mode
-            run_cli(" ".join(sys.argv[1:]))
+            run_cli(" ".join(args), model_id=model_override)
             sys.exit(0)
 
-    run_cli()
+    run_cli(model_id=model_override)
