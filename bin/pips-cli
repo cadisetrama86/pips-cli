@@ -69,7 +69,7 @@ ROUTER_API_KEY = os.environ.get("ROUTER_API_KEY", os.environ.get("PIPS_API_KEY",
 API_KEY = ROUTER_API_KEY
 
 PIPS_AGENT_URL = os.environ.get("PIPS_AGENT_URL", "http://127.0.0.1:20130").rstrip("/")
-DEFAULT_FALLBACK_MODEL = "ag/gemini-3.8-flash"
+DEFAULT_FALLBACK_MODEL = os.environ.get("PIPS_DEFAULT_MODEL", "auto")
 
 # ──────────────────────────────────────────────
 # Readline history setup
@@ -161,7 +161,7 @@ class ModelService:
     def format_model_metadata(model_id: str) -> tuple[str, str]:
         """Convert model ID to display label & provider group without dropping any unknown model."""
         if model_id.lower() == "auto":
-            return "Auto", "Let 9Router decide"
+            return "Auto (Smart Router)", "9Router Dynamic"
 
         parts = model_id.split('/', 1)
         prefix = parts[0] if len(parts) > 1 else ''
@@ -234,7 +234,10 @@ class ModelService:
                         })
 
                 if parsed:
-                    self.models = parsed
+                    # Pin 'auto' smart combo to the very top (index 0) if present
+                    auto_list = [m for m in parsed if m["id"].lower() == "auto"]
+                    other_list = [m for m in parsed if m["id"].lower() != "auto"]
+                    self.models = auto_list + other_list
                     self.last_fetch = now
                     return True, f"Loaded {len(parsed)} models"
                 else:
@@ -1243,7 +1246,13 @@ def run_chat_session(initial_model_id: str = None, start_agent: bool = False):
             continue
 
         messages.append({"role": "user", "content": user_input})
-        response = render_response(model_id, messages)
+
+        # Token optimization: sliding context window to prevent token explosion
+        active_msgs = messages
+        if len(active_msgs) > 24:
+            active_msgs = [active_msgs[0]] + active_msgs[-23:]
+
+        response = render_response(model_id, active_msgs)
 
         if response:
             messages.append({"role": "assistant", "content": response})
@@ -1261,14 +1270,14 @@ def main():
     model_service.fetch_models()
     if model_service.models:
         current_model_id = model_service.models[0]["id"]
-        # Find exact base flash model first (prefer ag/gemini-3.8-flash without -medium, -high, -low)
+        # Prioritize 'auto' smart router combo if available
         for m in model_service.models:
-            if m["id"] == "ag/gemini-3.8-flash":
+            if m["id"].lower() == "auto":
                 current_model_id = m["id"]
                 break
         else:
             for m in model_service.models:
-                if "gemini-3.8-flash" in m["id"] and "medium" not in m["id"] and "high" not in m["id"] and "low" not in m["id"]:
+                if m["id"] == "ag/gemini-3.8-flash":
                     current_model_id = m["id"]
                     break
 

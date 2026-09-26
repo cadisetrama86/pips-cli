@@ -60,7 +60,7 @@ DEFAULT_BASE_URL = "http://127.0.0.1:20128/v1" if os.path.exists("/home/afif-sof
 PIPS_BASE_URL = os.environ.get("PIPS_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
 PIPS_API_KEY = os.environ.get("PIPS_API_KEY", "sk-ffcd49f104f5ca66-hs6zum-6bae8b1c")
 AGENT_PORT = int(os.environ.get("PIPS_AGENT_PORT", "20130"))
-AGENT_MODEL = os.environ.get("PIPS_AGENT_MODEL", "ag/gemini-3.8-flash")
+AGENT_MODEL = os.environ.get("PIPS_AGENT_MODEL", "auto")
 
 # ──────────────────────────────────────────────
 # Safety guardrails
@@ -715,11 +715,14 @@ class PIPSAgent:
                 if event_callback:
                     event_callback("tool_result", {"id": call_id, "name": name, "result": result})
 
-                # Append tool result to messages
+                # Append tool result to messages (with token-saving compaction)
+                res_str = json.dumps(result, ensure_ascii=False)
+                if len(res_str) > 3000:
+                    res_str = res_str[:1800] + "\n... [content truncated to save tokens] ...\n" + res_str[-800:]
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call_id,
-                    "content": json.dumps(result, ensure_ascii=False)
+                    "content": res_str
                 })
 
         if not final_answer:
